@@ -382,7 +382,7 @@ async def show_welcome_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Send the welcome message with the keyboard
     await update.message.reply_text(
-        text="*🔥 Welcome to NumInfo Bot 🔥*\n\n"
+        text="*🔥 Welcome to Mr Detective Bot 🔥*\n\n"
         "*🔍 Features:*\n"
         "• Mobile Number Search\n"
         "• Aadhar Number Search\n"
