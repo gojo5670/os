@@ -14,8 +14,8 @@ logger = logging.getLogger(__name__)
 
 # Get environment variables
 TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
-MOBILE_SEARCH_API = os.getenv("MOBILE_SEARCH_API", "https://stuff-pioneer-texts-possibility.trycloudflare.com/search?mobile=")
-AADHAR_SEARCH_API = os.getenv("AADHAR_SEARCH_API", "https://stuff-pioneer-texts-possibility.trycloudflare.com/search?aadhar=")
+MOBILE_SEARCH_API = os.getenv("MOBILE_SEARCH_API", "https://bottle-eg-capitol-racks.trycloudflare.com/search?mobile=")
+AADHAR_SEARCH_API = os.getenv("AADHAR_SEARCH_API", "https://bottle-eg-capitol-racks.trycloudflare.com/search?aadhar=")
 AADHAAR_AGE_API = "https://kyc-api.aadhaarkyc.io/api/v1/aadhaar-validation/aadhaar-validation"
 AADHAAR_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTY0MTIxNDczNSwianRpIjoiMmE4MWZkMTUtNWU0Yy00NjY1LWE0NTItYTE4ZDRmZTRkOTdkIiwidHlwZSI6ImFjY2VzcyIsImlkZW50aXR5IjoiZGV2LmtyNGFsbEBhYWRoYWFyYXBpLmlvIiwibmJmIjoxNjQxMjE0NzM1LCJleHAiOjE5NTY1NzQ3MzUsInVzZXJfY2xhaW1zIjp7InNjb3BlcyI6WyJyZWFkIl19fQ.xq-191hmb69EjYkJ5r4c2yAJNf2lMqnA_3PhfnCrzNY"
 AADHAAR_TO_PAN_API = "https://aadhaar-to-full-pan.p.rapidapi.com/Aadhaar_to_pan"
@@ -35,6 +35,10 @@ user_data_dict = {}
 
 # Search functions
 async def mobile_search(update: Update, mobile: str):
+    # If the mobile is "Back to Menu", ignore it
+    if mobile == "⬅️ Back to Menu":
+        return
+        
     try:
         response = requests.get(f"{MOBILE_SEARCH_API}{mobile}")
         data = response.json()
@@ -78,6 +82,10 @@ async def mobile_search(update: Update, mobile: str):
         await update.message.reply_text(f"Error: {str(e)}")
 
 async def aadhar_search(update: Update, aadhar: str):
+    # If the aadhar is "Back to Menu", ignore it
+    if aadhar == "⬅️ Back to Menu":
+        return
+        
     try:
         response = requests.get(f"{AADHAR_SEARCH_API}{aadhar}")
         data = response.json()
@@ -128,6 +136,10 @@ async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     aadhar_number = context.args[0]
+    
+    # If the aadhar number is "Back to Menu", ignore it
+    if aadhar_number == "⬅️ Back to Menu":
+        return
     
     # Validate Aadhaar number format (12 digits)
     if not aadhar_number.isdigit() or len(aadhar_number) != 12:
@@ -290,6 +302,10 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Join all arguments to handle names with spaces
     query = " ".join(context.args)
     
+    # If the query is "Back to Menu", ignore it
+    if query == "⬅️ Back to Menu":
+        return
+    
     try:
         # Define social networks to search
         social_networks = "facebook,tiktok,instagram,snapchat,twitter,youtube,linkedin,github,pinterest"
@@ -382,7 +398,7 @@ async def show_welcome_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Send the welcome message with the keyboard
     await update.message.reply_text(
-        text="*🔥 Welcome to Mr Detective Bot 🔥*\n\n"
+        text="*🔥 Welcome to NumInfo Bot 🔥*\n\n"
         "*🔍 Features:*\n"
         "• Mobile Number Search\n"
         "• Aadhar Number Search\n"
@@ -438,6 +454,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if text.lower() in ['/end', 'end']:
         return await show_simple_menu(update, context)
     
+    # Handle back to menu button
+    if text == "⬅️ Back to Menu":
+        return await show_simple_menu(update, context)
+    
     # Handle help request
     if text.lower() in ['/help', 'help']:
         await update.message.reply_text(
@@ -457,27 +477,62 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Handle button presses
     if text == "Mobile Search 📱":
-        await update.message.reply_text("Please enter a 10-digit mobile number to search:")
+        # Create keyboard with back button
+        keyboard = [["⬅️ Back to Menu"]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            "Please enter a 10-digit mobile number to search:",
+            reply_markup=reply_markup
+        )
         user_data_dict[update.effective_user.id] = {"next_action": "mobile_search"}
         return ENTER_MOBILE
     
     elif text == "Aadhar Search 🔎":
-        await update.message.reply_text("Please enter a 12-digit Aadhar number to search:")
+        # Create keyboard with back button
+        keyboard = [["⬅️ Back to Menu"]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            "Please enter a 12-digit Aadhar number to search:",
+            reply_markup=reply_markup
+        )
         user_data_dict[update.effective_user.id] = {"next_action": "aadhar_search"}
         return ENTER_AADHAR
     
     elif text == "Social Media Search 🌐":
-        await update.message.reply_text("Please enter a username or person name to search for social media profiles:")
+        # Create keyboard with back button
+        keyboard = [["⬅️ Back to Menu"]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            "Please enter a username or person name to search for social media profiles:",
+            reply_markup=reply_markup
+        )
         user_data_dict[update.effective_user.id] = {"next_action": "social_search"}
         return ENTER_SOCIAL
     
     elif text == "Age Check 👶":
-        await update.message.reply_text("Please enter a 12-digit Aadhar number to check age range:")
+        # Create keyboard with back button
+        keyboard = [["⬅️ Back to Menu"]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            "Please enter a 12-digit Aadhar number to check age range:",
+            reply_markup=reply_markup
+        )
         user_data_dict[update.effective_user.id] = {"next_action": "age_search"}
         return ENTER_AGE
     
     elif text == "PAN Details 💳":
-        await update.message.reply_text("Please enter a 12-digit Aadhar number to get PAN details:")
+        # Create keyboard with back button
+        keyboard = [["⬅️ Back to Menu"]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            "Please enter a 12-digit Aadhar number to get PAN details:",
+            reply_markup=reply_markup
+        )
         user_data_dict[update.effective_user.id] = {"next_action": "pan_search"}
         return ENTER_AADHAR
     
@@ -511,6 +566,10 @@ async def handle_mobile_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     text = update.message.text
     
+    # Check if user wants to go back to menu
+    if text == "⬅️ Back to Menu":
+        return await show_simple_menu(update, context)
+    
     # Check if it's a valid mobile number
     if text.isdigit() and len(text) == 10:
         # Send a message that we're processing
@@ -530,6 +589,10 @@ async def handle_mobile_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_aadhar_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
+    
+    # Check if user wants to go back to menu
+    if text == "⬅️ Back to Menu":
+        return await show_simple_menu(update, context)
     
     # Check if it's a valid Aadhar number
     if text.isdigit() and len(text) == 12:
@@ -567,6 +630,10 @@ async def handle_social_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_id = update.effective_user.id
     query = update.message.text
     
+    # Check if user wants to go back to menu
+    if query == "⬅️ Back to Menu":
+        return await show_simple_menu(update, context)
+    
     # Send a message that we're processing
     await update.message.reply_text(f"Searching for social media profiles for: {query}...")
     
@@ -585,6 +652,10 @@ async def handle_social_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def handle_age_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     text = update.message.text
+    
+    # Check if user wants to go back to menu
+    if text == "⬅️ Back to Menu":
+        return await show_simple_menu(update, context)
     
     # Check if it's a valid Aadhar number
     if text.isdigit() and len(text) == 12:
