@@ -1,6 +1,8 @@
 import os
 import logging
 import requests
+import httpx
+import asyncio
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler, ConversationHandler, CallbackQueryHandler
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ParseMode
@@ -21,6 +23,8 @@ AADHAAR_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJmcmVzaCI6ZmFsc2UsImlh
 AADHAAR_TO_PAN_API = "https://aadhaar-to-full-pan.p.rapidapi.com/Aadhaar_to_pan"
 SOCIAL_LINKS_API = "https://social-links-search.p.rapidapi.com/search-social-links"
 SOCIAL_LINKS_API_KEY = "525a6a5a93msh3b9d06f41651572p16ef82jsnfb8eeb3cc004"
+HIBP_API_KEY = "6d704d3eccc0484ca7777ccdf6ed02f2"
+HIBP_API_URL = "https://haveibeenpwned.com/api/v3/breachedaccount/"
 
 # Conversation states
 ENTER_API_KEY = 0
@@ -29,9 +33,51 @@ ENTER_MOBILE = 10
 ENTER_AADHAR = 20
 ENTER_SOCIAL = 30
 ENTER_AGE = 40
+ENTER_EMAIL = 50
 
 # User data dictionary to store temporary data
 user_data_dict = {}
+
+# Helper function to get data with retry mechanism
+async def get_api_data(url, max_retries=3, delay=1):
+    retries = 0
+    last_error = None
+    
+    while retries < max_retries:
+        try:
+            async with httpx.AsyncClient() as client:
+                response = await client.get(url, timeout=10.0)
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    if "data" in data and data["data"]:
+                        return data
+                    
+                    # If no data found but API returned successfully, try again
+                    if retries < max_retries - 1:
+                        logger.info(f"No data found, retrying {retries+1}/{max_retries}...")
+                        await asyncio.sleep(delay)
+                        retries += 1
+                        continue
+                    return data
+                
+                # If API returned error, try again
+                logger.error(f"API returned error {response.status_code}, retrying {retries+1}/{max_retries}...")
+                
+            # Increase delay with each retry (exponential backoff)
+            await asyncio.sleep(delay)
+            delay *= 2
+            retries += 1
+            
+        except Exception as e:
+            last_error = str(e)
+            logger.error(f"Error fetching data: {last_error}, retrying {retries+1}/{max_retries}...")
+            await asyncio.sleep(delay)
+            delay *= 2
+            retries += 1
+    
+    # If all retries failed, return error
+    return {"error": f"Failed after {max_retries} attempts. Last error: {last_error}"}
 
 # Search functions
 async def mobile_search(update: Update, mobile: str):
@@ -40,8 +86,18 @@ async def mobile_search(update: Update, mobile: str):
         return
         
     try:
-        response = requests.get(f"{MOBILE_SEARCH_API}{mobile}")
-        data = response.json()
+        # Send a "searching" message
+        searching_message = await update.message.reply_text("🔍 Searching... This may take a moment.")
+        
+        # Use the async retry mechanism
+        data = await get_api_data(f"{MOBILE_SEARCH_API}{mobile}")
+        
+        # Delete the "searching" message
+        await searching_message.delete()
+        
+        if "error" in data:
+            await update.message.reply_text(f"Error: {data['error']}")
+            return
         
         if "data" in data and data["data"]:
             # First show how many results were found
@@ -87,9 +143,19 @@ async def aadhar_search(update: Update, aadhar: str):
         return
         
     try:
-        response = requests.get(f"{AADHAR_SEARCH_API}{aadhar}")
-        data = response.json()
+        # Send a "searching" message
+        searching_message = await update.message.reply_text("🔍 Searching... This may take a moment.")
         
+        # Use the async retry mechanism
+        data = await get_api_data(f"{AADHAR_SEARCH_API}{aadhar}")
+        
+        # Delete the "searching" message
+        await searching_message.delete()
+        
+        if "error" in data:
+            await update.message.reply_text(f"Error: {data['error']}")
+            return
+            
         if "data" in data and data["data"]:
             # First show how many results were found
             count = len(data["data"])
@@ -385,12 +451,54 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in social search: {str(e)}")
         await update.message.reply_text(f"Error: {str(e)}")
 
+# Breach check function
+async def breach_check(update: Update, email: str):
+    # If the email is "Back to Menu", ignore it
+    if email == "⬅️ Back to Menu":
+        return
+        
+    try:
+        # HIBP API endpoint
+        url = f'{HIBP_API_URL}{email}'
+        
+        # Headers
+        headers = {
+            'hibp-api-key': HIBP_API_KEY,
+            'User-Agent': 'TelegramBot'
+        }
+        
+        # Make the API request
+        response = requests.get(url, headers=headers)
+        
+        # Handle the response
+        if response.status_code == 200:
+            breaches = response.json()
+            breach_count = len(breaches)
+            
+            # Create message with breach information
+            result = f"⚠️ *Email Breach Alert* ⚠️\n\n"
+            result += f"The email `{email}` has been found in *{breach_count} data breaches*:\n\n"
+            
+            # Add only breach platform names in a simple list
+            for i, breach in enumerate(breaches):
+                breach_name = breach.get('Name', 'Unknown')
+                result += f"• `{breach_name}`\n"
+            
+            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+        elif response.status_code == 404:
+            await update.message.reply_text(f"✅ Good news! The email `{email}` has NOT been found in any known data breaches.", parse_mode=ParseMode.MARKDOWN)
+        else:
+            await update.message.reply_text(f"Error checking breach data: Status code {response.status_code}")
+    except Exception as e:
+        logger.error(f"Error in breach check: {str(e)}")
+        await update.message.reply_text(f"Error: {str(e)}")
+
 # Main menu function with full welcome message
 async def show_welcome_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Create reply keyboard with only necessary buttons
     keyboard = [
         ["Mobile Search 📱", "Aadhar Search 🔎"],
-        ["Social Media Search 🌐"],
+        ["Social Media Search 🌐", "Breach Check 🔒"],
         ["Age Check 👶", "PAN Details 💳"]
     ]
     
@@ -403,6 +511,7 @@ async def show_welcome_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Mobile Number Search\n"
         "• Aadhar Number Search\n"
         "• Social Media Profiles\n"
+        "• Email Breach Check\n"
         "• Age Check from Aadhar\n"
         "• PAN Details from Aadhar\n\n"
         "*👨‍💻 Developer:* @icodeinbinary\n\n"
@@ -418,7 +527,7 @@ async def show_simple_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Create reply keyboard with only necessary buttons
     keyboard = [
         ["Mobile Search 📱", "Aadhar Search 🔎"],
-        ["Social Media Search 🌐"],
+        ["Social Media Search 🌐", "Breach Check 🔒"],
         ["Age Check 👶", "PAN Details 💳"]
     ]
     
@@ -466,6 +575,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Mobile Search - Search by 10-digit mobile number\n"
             f"• Aadhar Search - Search by 12-digit Aadhar number\n"
             f"• Social Media Search - Find social profiles by name/username\n"
+            f"• Breach Check - Check if email was in data breaches\n"
             f"• Age Check - Get age range from Aadhar number\n"
             f"• PAN Details - Get PAN details from Aadhar number\n\n"
             f"Use /start to see the welcome message\n"
@@ -535,6 +645,18 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         user_data_dict[update.effective_user.id] = {"next_action": "pan_search"}
         return ENTER_AADHAR
+    
+    elif text == "Breach Check 🔒":
+        # Create keyboard with back button
+        keyboard = [["⬅️ Back to Menu"]]
+        reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+        
+        await update.message.reply_text(
+            "Please enter an email address to check for data breaches:",
+            reply_markup=reply_markup
+        )
+        user_data_dict[update.effective_user.id] = {"next_action": "breach_check"}
+        return ENTER_EMAIL
     
     # Check if the message is a number
     if text.isdigit():
@@ -675,6 +797,30 @@ async def handle_age_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationHandler.END
 
+# Handle email input for breach check
+async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    email = update.message.text
+    
+    # Check if user wants to go back to menu
+    if email == "⬅️ Back to Menu":
+        return await show_simple_menu(update, context)
+    
+    # Basic email validation
+    if '@' in email and '.' in email:
+        # Send a message that we're processing
+        await update.message.reply_text(f"Checking if email has been compromised: {email}...")
+        
+        # Call the breach check function
+        await breach_check(update, email)
+        
+        # Show the simple menu after search is complete
+        await show_simple_menu(update, context)
+    else:
+        await update.message.reply_text("Invalid email address! Please enter a valid email.")
+    
+    return ConversationHandler.END
+
 if __name__ == "__main__":
     # Clear existing updates and build application
     requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
@@ -694,7 +840,8 @@ if __name__ == "__main__":
             ENTER_AADHAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_aadhar_input)],
             ENTER_SOCIAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_social_input)],
             ENTER_AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_age_input)],
-            ENTER_API_KEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_api_key)]
+            ENTER_API_KEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_api_key)],
+            ENTER_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)]
         },
         fallbacks=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)]
     )
