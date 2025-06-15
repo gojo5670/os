@@ -39,7 +39,7 @@ ENTER_EMAIL = 50
 user_data_dict = {}
 
 # Helper function to get data with retry mechanism
-async def get_api_data(url, max_retries=3, delay=1):
+async def get_api_data(url, max_retries=5, delay=1):
     retries = 0
     last_error = None
     
