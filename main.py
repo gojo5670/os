@@ -16,8 +16,8 @@ logger = logging.getLogger(__name__)
 
 # Get environment variables
 TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
-MOBILE_SEARCH_API = os.getenv("MOBILE_SEARCH_API", "https://bottle-eg-capitol-racks.trycloudflare.com/search?mobile=")
-AADHAR_SEARCH_API = os.getenv("AADHAR_SEARCH_API", "https://bottle-eg-capitol-racks.trycloudflare.com/search?aadhar=")
+MOBILE_SEARCH_API = os.getenv("MOBILE_SEARCH_API", "https://measure-placement-maximize-pension.trycloudflare.com/search?mobile=")
+AADHAR_SEARCH_API = os.getenv("AADHAR_SEARCH_API", "https://measure-placement-maximize-pension.trycloudflare.com/search?aadhar=")
 AADHAAR_AGE_API = "https://kyc-api.aadhaarkyc.io/api/v1/aadhaar-validation/aadhaar-validation"
 AADHAAR_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTY0MTIxNDczNSwianRpIjoiMmE4MWZkMTUtNWU0Yy00NjY1LWE0NTItYTE4ZDRmZTRkOTdkIiwidHlwZSI6ImFjY2VzcyIsImlkZW50aXR5IjoiZGV2LmtyNGFsbEBhYWRoYWFyYXBpLmlvIiwibmJmIjoxNjQxMjE0NzM1LCJleHAiOjE5NTY1NzQ3MzUsInVzZXJfY2xhaW1zIjp7InNjb3BlcyI6WyJyZWFkIl19fQ.xq-191hmb69EjYkJ5r4c2yAJNf2lMqnA_3PhfnCrzNY"
 AADHAAR_TO_PAN_API = "https://aadhaar-to-full-pan.p.rapidapi.com/Aadhaar_to_pan"
