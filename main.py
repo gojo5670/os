@@ -15,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Get environment variables
-TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
+TOKEN = ("7990227150:AAFOjim0xdbLJi_cWo14mMlP0rNiHTiai90")
 MOBILE_SEARCH_API = os.getenv("MOBILE_SEARCH_API", "https://measure-placement-maximize-pension.trycloudflare.com/search?mobile=")
 AADHAR_SEARCH_API = os.getenv("AADHAR_SEARCH_API", "https://measure-placement-maximize-pension.trycloudflare.com/search?aadhar=")
 AADHAAR_AGE_API = "https://kyc-api.aadhaarkyc.io/api/v1/aadhaar-validation/aadhaar-validation"
@@ -43,27 +43,44 @@ async def get_api_data(url, max_retries=5, delay=1):
     retries = 0
     last_error = None
     
+    headers = {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+        'Accept': 'application/json, text/plain, */*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Connection': 'keep-alive',
+    }
+    
     while retries < max_retries:
         try:
-            async with httpx.AsyncClient() as client:
-                response = await client.get(url, timeout=10.0)
-                
-                if response.status_code == 200:
-                    data = response.json()
-                    if "data" in data and data["data"]:
-                        return data
-                    
-                    # If no data found but API returned successfully, try again
-                    if retries < max_retries - 1:
-                        logger.info(f"No data found, retrying {retries+1}/{max_retries}...")
-                        await asyncio.sleep(delay)
-                        retries += 1
-                        continue
-                    return data
-                
-                # If API returned error, try again
-                logger.error(f"API returned error {response.status_code}, retrying {retries+1}/{max_retries}...")
-                
+            # Use synchronous requests instead of httpx for better compatibility
+            response = requests.get(url, headers=headers, timeout=10.0)
+            
+            # Log the response for debugging
+            logger.info(f"API Response: Status={response.status_code}, Content={response.text[:100]}...")
+            
+            if response.status_code == 200:
+                try:
+                    # Check if response is a JSON array
+                    if response.text.strip().startswith('['):
+                        # Parse as array and wrap in data object
+                        data_array = response.json()
+                        return {"data": data_array}
+                    else:
+                        # Try to parse as regular JSON object
+                        data = response.json()
+                        if "data" in data:
+                            return data
+                        else:
+                            # If no data field but valid JSON, wrap in data object
+                            return {"data": [data] if not isinstance(data, list) else data}
+                except ValueError as e:
+                    # If response is not valid JSON, log error
+                    logger.error(f"Invalid JSON response: {response.text[:200]}, Error: {str(e)}")
+                    return {"error": "Invalid JSON response from API"}
+            
+            # If API returned error, try again
+            logger.error(f"API returned error {response.status_code}, retrying {retries+1}/{max_retries}...")
+            
             # Increase delay with each retry (exponential backoff)
             await asyncio.sleep(delay)
             delay *= 2
@@ -89,8 +106,12 @@ async def mobile_search(update: Update, mobile: str):
         # Send a "searching" message
         searching_message = await update.message.reply_text("🔍 Searching... This may take a moment.")
         
+        # Log the API URL for debugging
+        api_url = f"{MOBILE_SEARCH_API}{mobile}"
+        logger.info(f"Calling API: {api_url}")
+        
         # Use the async retry mechanism
-        data = await get_api_data(f"{MOBILE_SEARCH_API}{mobile}")
+        data = await get_api_data(api_url)
         
         # Delete the "searching" message
         await searching_message.delete()
@@ -132,6 +153,49 @@ async def mobile_search(update: Update, mobile: str):
                 
                 await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
         else:
+            # Try direct API call as fallback
+            try:
+                logger.info("Trying direct API call as fallback")
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                }
+                response = requests.get(api_url, headers=headers)
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        if "data" in data and data["data"]:
+                            count = len(data["data"])
+                            await update.message.reply_text(f"Found {count} result(s) for mobile: {mobile}")
+                            
+                            # Process data as before
+                            for i, person in enumerate(data["data"]):
+                                mobile_num = person.get('mobile', 'N/A')
+                                alt_mobile = person.get('alt', 'N/A')
+                                person_id = person.get('id', 'N/A')
+                                
+                                result = (
+                                    f"Person Information ({i+1}/{count}):\n\n"
+                                    f"👤 *Name*: {person.get('name', 'N/A')}\n"
+                                    f"👨‍👦 *Father's Name*: {person.get('fname', 'N/A')}\n"
+                                    f"🏠 *Address*: `{person.get('address', 'N/A').replace('!', ', ')}`\n"
+                                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n\n"
+                                )
+                                
+                                result += f"📱 *Mobile*: `{mobile_num}`\n"
+                                result += f"📞 *Alt Mobile*: `{alt_mobile}`\n"
+                                result += f"🆔 *ID*: `{person_id}`"
+                                
+                                if 'email' in person and person.get('email'):
+                                    email = person.get('email')
+                                    result += f"\n📧 *Email*: `{email}`"
+                                
+                                await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                            return
+                    except Exception as e:
+                        logger.error(f"Error parsing fallback response: {str(e)}")
+            except Exception as e:
+                logger.error(f"Fallback API call failed: {str(e)}")
+            
             await update.message.reply_text("No information found for this mobile number.")
     except Exception as e:
         logger.error(f"Error in mobile search: {str(e)}")
@@ -146,8 +210,12 @@ async def aadhar_search(update: Update, aadhar: str):
         # Send a "searching" message
         searching_message = await update.message.reply_text("🔍 Searching... This may take a moment.")
         
+        # Log the API URL for debugging
+        api_url = f"{AADHAR_SEARCH_API}{aadhar}"
+        logger.info(f"Calling API: {api_url}")
+        
         # Use the async retry mechanism
-        data = await get_api_data(f"{AADHAR_SEARCH_API}{aadhar}")
+        data = await get_api_data(api_url)
         
         # Delete the "searching" message
         await searching_message.delete()
@@ -189,6 +257,49 @@ async def aadhar_search(update: Update, aadhar: str):
                 
                 await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
         else:
+            # Try direct API call as fallback
+            try:
+                logger.info("Trying direct API call as fallback")
+                headers = {
+                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+                }
+                response = requests.get(api_url, headers=headers)
+                if response.status_code == 200:
+                    try:
+                        data = response.json()
+                        if "data" in data and data["data"]:
+                            count = len(data["data"])
+                            await update.message.reply_text(f"Found {count} result(s) for Aadhar: {aadhar}")
+                            
+                            # Process data as before
+                            for i, person in enumerate(data["data"]):
+                                mobile_num = person.get('mobile', 'N/A')
+                                alt_mobile = person.get('alt', 'N/A')
+                                person_id = person.get('id', 'N/A')
+                                
+                                result = (
+                                    f"Person Information ({i+1}/{count}):\n\n"
+                                    f"👤 *Name*: {person.get('name', 'N/A')}\n"
+                                    f"👨‍👦 *Father's Name*: {person.get('fname', 'N/A')}\n"
+                                    f"🏠 *Address*: `{person.get('address', 'N/A').replace('!', ', ')}`\n"
+                                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n\n"
+                                )
+                                
+                                result += f"📱 *Mobile*: `{mobile_num}`\n"
+                                result += f"📞 *Alt Mobile*: `{alt_mobile}`\n"
+                                result += f"🆔 *ID*: `{person_id}`"
+                                
+                                if 'email' in person and person.get('email'):
+                                    email = person.get('email')
+                                    result += f"\n📧 *Email*: `{email}`"
+                                
+                                await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                            return
+                    except Exception as e:
+                        logger.error(f"Error parsing fallback response: {str(e)}")
+            except Exception as e:
+                logger.error(f"Fallback API call failed: {str(e)}")
+            
             await update.message.reply_text("No information found for this Aadhar number.")
     except Exception as e:
         logger.error(f"Error in Aadhar search: {str(e)}")
