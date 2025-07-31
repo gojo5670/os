@@ -16,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
+TOKEN = ("08114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
 
 # Admin and channel verification
 ADMIN_IDS = [1074750898]
@@ -44,12 +44,12 @@ SOCIAL_LINKS_API_KEY = "525a6a5a93msh3b9d06f41651572p16ef82jsnfb8eeb3cc004"
 BREACH_API = "https://doxit.me/?key=icodeinbinary&breach="
 
 # API Maintenance Flags - Set to True to enable maintenance mode
-MOBILE_API_MAINTENANCE = True
-AADHAR_API_MAINTENANCE = True
-AGE_API_MAINTENANCE = True
+MOBILE_API_MAINTENANCE = False
+AADHAR_API_MAINTENANCE = False
+AGE_API_MAINTENANCE = False
 VEHICLE_API_MAINTENANCE = True
 SOCIAL_API_MAINTENANCE = True
-BREACH_API_MAINTENANCE = True
+BREACH_API_MAINTENANCE = False
 
 # Conversation states
 
@@ -102,7 +102,7 @@ async def cleanup_http_client():
 
 def get_maintenance_status(service_name: str, is_maintenance: bool) -> str:
     """Get maintenance status text for a service"""
-    return f"{service_name} {'🚧 (Maintenance)' if is_maintenance else ''}"
+    return f"{service_name} {'🚧' if is_maintenance else ''}"
 
 # Rate limiting and queue management
 import time
