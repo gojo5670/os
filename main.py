@@ -39,7 +39,7 @@ AGE_API = "https://doxit.me/?key=icodeinbinary&age="
 VEHICLE_API = "http://3.109.155.50/rc-details/"
 VEHICLE_API_KEY = "king_bhai_2388d259"
 SOCIAL_LINKS_API = "https://social-links-search.p.rapidapi.com/search-social-links"
-SOCIAL_LINKS_API_KEY = "525a6a5a93msh3b9d06f41651572p16ef82jsnfb8eeb3cc004"
+SOCIAL_LINKS_API_KEY = "422ce45dabmshae4fa40ed7c05b2p11fbbdjsn35ac3f8fe43d"
 BREACH_API = "https://doxit.me/?key=icodeinbinary&breach="
 
 # Conversation states
