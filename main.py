@@ -14,26 +14,42 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+# Bot configuration
+TOKEN = ("8028221566:AAEQTYPRHSQMy_3uYpDJ8kuBEowUn5WS1GI")
+
+# Admin and channel verification
+ADMIN_IDS = [1074750898]
+REQUIRED_CHANNELS = [
+    {
+        "username": "OSINT", 
+        "url": "https://t.me/+g0PXmxFjHWs1MTE1", 
+        "chat_id": "-1002830525000"  # OSINT private channel chat ID
+    },
+    {
+        "username": "UR_IMAGE", 
+        "url": "https://t.me/UR_IMAGE", 
+        "chat_id": "-1002508479565"  # UR_IMAGE public channel chat ID
+    }
+]
+
 # Get environment variables
-TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
-MOBILE_SEARCH_API = os.getenv("MOBILE_SEARCH_API", "https://measure-placement-maximize-pension.trycloudflare.com/search?mobile=")
-AADHAR_SEARCH_API = os.getenv("AADHAR_SEARCH_API", "https://measure-placement-maximize-pension.trycloudflare.com/search?aadhar=")
-AADHAAR_AGE_API = "https://kyc-api.aadhaarkyc.io/api/v1/aadhaar-validation/aadhaar-validation"
-AADHAAR_API_KEY = "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJmcmVzaCI6ZmFsc2UsImlhdCI6MTY0MTIxNDczNSwianRpIjoiMmE4MWZkMTUtNWU0Yy00NjY1LWE0NTItYTE4ZDRmZTRkOTdkIiwidHlwZSI6ImFjY2VzcyIsImlkZW50aXR5IjoiZGV2LmtyNGFsbEBhYWRoYWFyYXBpLmlvIiwibmJmIjoxNjQxMjE0NzM1LCJleHAiOjE5NTY1NzQ3MzUsInVzZXJfY2xhaW1zIjp7InNjb3BlcyI6WyJyZWFkIl19fQ.xq-191hmb69EjYkJ5r4c2yAJNf2lMqnA_3PhfnCrzNY"
-AADHAAR_TO_PAN_API = "https://aadhaar-to-full-pan.p.rapidapi.com/Aadhaar_to_pan"
+MOBILE_SEARCH_API = os.getenv("MOBILE_SEARCH_API", "https://doxit.me/?key=icodeinbinary&mobile=")
+AADHAR_SEARCH_API = os.getenv("AADHAR_SEARCH_API", "https://doxit.me/?key=icodeinbinary&aadhaar=")
+AGE_API = "https://doxit.me/?key=icodeinbinary&age="
+VEHICLE_API = "http://3.109.155.50/rc-details/"
+VEHICLE_API_KEY = "king_bhai_2388d259"
 SOCIAL_LINKS_API = "https://social-links-search.p.rapidapi.com/search-social-links"
 SOCIAL_LINKS_API_KEY = "525a6a5a93msh3b9d06f41651572p16ef82jsnfb8eeb3cc004"
-HIBP_API_KEY = "6d704d3eccc0484ca7777ccdf6ed02f2"
-HIBP_API_URL = "https://haveibeenpwned.com/api/v3/breachedaccount/"
+BREACH_API = "https://doxit.me/?key=icodeinbinary&breach="
 
 # Conversation states
-ENTER_API_KEY = 0
-PROCESS_PAN = 1
+
 ENTER_MOBILE = 10
 ENTER_AADHAR = 20
 ENTER_SOCIAL = 30
 ENTER_AGE = 40
 ENTER_EMAIL = 50
+ENTER_VEHICLE = 60
 
 # User data dictionary to store temporary data
 user_data_dict = {}
@@ -95,6 +111,130 @@ async def get_api_data(url, max_retries=5, delay=1):
     
     # If all retries failed, return error
     return {"error": f"Failed after {max_retries} attempts. Last error: {last_error}"}
+
+# Channel membership verification
+async def check_channel_membership(context: ContextTypes.DEFAULT_TYPE, user_id: int):
+    """Check if user is a member of all required channels"""
+    # Admin bypass
+    if user_id in ADMIN_IDS:
+        return True
+    
+    try:
+        for channel in REQUIRED_CHANNELS:
+            chat_id = channel["chat_id"]
+            
+            # Check membership status
+            try:
+                member = await context.bot.get_chat_member(chat_id, user_id)
+                
+                # Check if user is a valid member (not left or kicked)
+                if member.status not in ['member', 'administrator', 'creator']:
+                    logger.info(f"User {user_id} is not a member of {channel['username']}")
+                    return False
+                    
+            except Exception as e:
+                error_msg = str(e).lower()
+                logger.error(f"Error checking membership for channel {channel['username']}: {str(e)}")
+                
+                # If we can't check membership, assume user is not a member
+                return False
+        
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error in channel membership check: {str(e)}")
+        return False
+
+async def send_join_channels_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Send message asking user to join required channels"""
+    try:
+        # Create inline keyboard with channel join buttons
+        keyboard = []
+        for channel in REQUIRED_CHANNELS:
+            keyboard.append([InlineKeyboardButton(f"Join @{channel['username']}", url=channel['url'])])
+        
+        # Add check membership button
+        keyboard.append([InlineKeyboardButton("✅ I've joined all channels", callback_data="check_membership")])
+        
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        message_text = "🔒 To use this bot, you need to join our channels first:"
+        
+        await update.message.reply_text(
+            message_text,
+            reply_markup=reply_markup
+        )
+        
+    except Exception as e:
+        logger.error(f"Error sending join channels message: {str(e)}")
+        await update.message.reply_text("Error: Could not verify channel membership. Please try again later.")
+
+async def verify_membership_middleware(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Middleware to check channel membership before processing any request"""
+    user_id = update.effective_user.id
+    
+    # Admin bypass
+    if user_id in ADMIN_IDS:
+        return True
+    
+    # Check membership
+    is_member = await check_channel_membership(context, user_id)
+    if not is_member:
+        await send_join_channels_message(update, context)
+        return False
+    
+    return True
+
+# Handle callback queries for membership check
+async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle inline keyboard callbacks"""
+    query = update.callback_query
+    
+    if query.data == "check_membership":
+        user_id = query.from_user.id
+        chat_id = query.message.chat.id
+        
+        # Check if user joined all channels
+        is_member = await check_channel_membership(context, user_id)
+        
+        if is_member:
+            # Delete the join channels message
+            try:
+                await query.message.delete()
+            except Exception as e:
+                logger.error(f"Error deleting message: {str(e)}")
+            
+            # Create reply keyboard with bot features
+            keyboard = [
+                ["Mobile Search 📱", "Aadhar Search 🔎"],
+                ["Social Media Search 🌐", "Breach Check 🔒"],
+                ["Age Check 👶", "Vehicle Info 🚗"]
+            ]
+            reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
+            
+            # Send welcome message with keyboard
+            await context.bot.send_message(
+                chat_id,
+                "🔥 Welcome to NumInfo Bot 🔥\n\n"
+                "🔍 Features:\n"
+                "• Mobile Number Search\n"
+                "• Aadhar Number Search\n"
+                "• Social Media Profiles\n"
+                "• Email Breach Check\n"
+                "• Age Check from Aadhar\n"
+                "• Vehicle RC Information\n\n"
+                "👨‍💻 Developer: @icodeinbinary\n\n"
+                "Select an option below👇",
+                reply_markup=reply_markup
+            )
+            
+            await query.answer()
+        else:
+            # Send alert that they need to join all channels
+            await query.answer(
+                "❌ You need to join all channels to use this bot.",
+                show_alert=True
+            )
 
 # Search functions
 async def mobile_search(update: Update, mobile: str):
@@ -305,7 +445,7 @@ async def aadhar_search(update: Update, aadhar: str):
         logger.error(f"Error in Aadhar search: {str(e)}")
         await update.message.reply_text(f"Error: {str(e)}")
 
-# Age range search function
+# Age range search function using doxit.me API
 async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if an argument was provided
     if not context.args:
@@ -324,141 +464,73 @@ async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     
     try:
-        # Prepare API request
-        payload = {
-            "id_number": aadhar_number
-        }
+        # Send a "searching" message
+        searching_message = await update.message.reply_text("🔍 Searching for age information... This may take a moment.")
         
+        # doxit.me API endpoint
+        api_url = f"{AGE_API}{aadhar_number}"
+        logger.info(f"Calling age API: {api_url}")
+        
+        # Make direct API call
         headers = {
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {AADHAAR_API_KEY}"
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
         }
         
-        # Make the API request
-        response = requests.post(AADHAAR_AGE_API, json=payload, headers=headers)
-        data = response.json()
+        response = requests.get(api_url, headers=headers, timeout=10.0)
         
-        # Check if the response contains age_range
-        if response.status_code == 200 and "data" in data and "age_range" in data["data"]:
-            age_range = data["data"]["age_range"]
-            await update.message.reply_text(
-                f"🔍 *Age Range Result*\n\n"
-                f"Aadhaar Number: `{aadhar_number}`\n"
-                f"Age Range: *{age_range}*",
-                parse_mode=ParseMode.MARKDOWN
-            )
+        # Delete the "searching" message
+        await searching_message.delete()
+        
+        if response.status_code == 200:
+            try:
+                data = response.json()
+                
+                # Check if the response is successful and contains data
+                if data.get("success") and "data" in data:
+                    age_data = data["data"]
+                    
+                    # Extract information from the response
+                    age_range = age_data.get("age_range", "Not available")
+                    state = age_data.get("state", "Not available")
+                    gender = age_data.get("gender", "Not available")
+                    last_digits = age_data.get("last_digits", "Not available")
+                    is_mobile = age_data.get("is_mobile", False)
+                    aadhaar_masked = age_data.get("aadhaar_number", "Not available")
+                    
+                    # Format gender
+                    gender_text = "Male" if gender == "M" else "Female" if gender == "F" else gender
+                    
+                    # Format mobile status
+                    mobile_status = "Yes" if is_mobile else "No"
+                    
+                    # Create detailed result message
+                    result = f"🔍 *Aadhaar Information Found*\n\n"
+                    result += f"👤 *Aadhaar*: `{aadhaar_masked}`\n"
+                    result += f"🎂 *Age Range*: `{age_range}`\n"
+                    result += f"🚻 *Gender*: `{gender_text}`\n"
+                    result += f"🏛️ *State*: `{state}`\n"
+                    result += f"🔢 *Last Digits*: `{last_digits}`\n"
+                    result += f"📱 *Mobile Linked*: `{mobile_status}`"
+                    
+                    await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                    
+                else:
+                    # If there's an error or no data
+                    error_msg = data.get("message", "Could not retrieve age information")
+                    await update.message.reply_text(f"❌ {error_msg}")
+                    
+            except ValueError as e:
+                logger.error(f"Invalid JSON response: {response.text[:200]}")
+                await update.message.reply_text("Error: Invalid response from age API")
         else:
-            # If there's an error or age_range is not available
-            error_msg = data.get("message", "Unknown error occurred")
-            await update.message.reply_text(f"Could not retrieve age range: {error_msg}")
+            await update.message.reply_text(f"Error checking age data: Status code {response.status_code}")
     
     except Exception as e:
         logger.error(f"Error in age search: {str(e)}")
         await update.message.reply_text(f"Error: {str(e)}")
 
-# PAN search function - start conversation
-async def pan_search_start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Check if an argument was provided
-    if not context.args:
-        await update.message.reply_text("Please provide an Aadhaar number after the /pan command.")
-        return ConversationHandler.END
-    
-    aadhar_number = context.args[0]
-    
-    # Validate Aadhaar number format (12 digits)
-    if not aadhar_number.isdigit() or len(aadhar_number) != 12:
-        await update.message.reply_text("Please provide a valid 12-digit Aadhaar number.")
-        return ConversationHandler.END
-    
-    # Store the Aadhaar number in user_data for later use
-    user_id = update.effective_user.id
-    user_data_dict[user_id] = {"aadhar_number": aadhar_number}
-    
-    await update.message.reply_text(
-        "Please enter your Special Key🔑 for the Aadhaar to PAN API.\n\n"
-        "If you don't have one, you can get it from 👉  @icodeinbinary\n"  
-    )
-    
-    return ENTER_API_KEY
 
-# Process API key and fetch PAN data
-async def process_api_key(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    api_key = update.message.text.strip()
-    
-    # Delete the message with the API key for security
-    try:
-        await update.message.delete()
-    except Exception as e:
-        logger.error(f"Could not delete message: {str(e)}")
-    
-    if user_id not in user_data_dict:
-        await update.message.reply_text("Session expired. Please start again with /pan command.")
-        return ConversationHandler.END
-    
-    aadhar_number = user_data_dict[user_id]["aadhar_number"]
-    
-    # Store API key in user data
-    user_data_dict[user_id]["api_key"] = api_key
-    
-    try:
-        # Prepare API request
-        payload = {
-            "aadhaar_no": aadhar_number
-        }
-        
-        headers = {
-            "x-rapidapi-key": api_key,
-            "x-rapidapi-host": "aadhaar-to-full-pan.p.rapidapi.com",
-            "Content-Type": "application/json"
-        }
-        
-        # Make the API request
-        response = requests.post(AADHAAR_TO_PAN_API, json=payload, headers=headers)
-        data = response.json()
-        
-        # Check if the response contains PAN information
-        if response.status_code == 200 and data.get("status") == "success":
-            pan_number = data["result"]["pan"]
-            aadhaar_link_status = data["result"]["aadhaar_link_status"]
-            
-            status_text = "Linked" if aadhaar_link_status == "Y" else "Not Linked"
-            
-            await update.message.reply_text(
-                f"🔍 *PAN Details Found*\n\n"
-                f"Aadhaar Number: `{aadhar_number}`\n"
-                f"PAN Number: `{pan_number}`\n"
-                f"Link Status: *{status_text}*",
-                parse_mode=ParseMode.MARKDOWN
-            )
-        else:
-            # If there's an error or PAN is not available
-            error_msg = data.get("message", "Unknown error occurred")
-            
-            # Check if the error is related to quota exceeded
-            if "exceeded the MONTHLY quota" in error_msg or "quota" in error_msg.lower():
-                await update.message.reply_text("SPECIAL KEY EXPIRED💀")
-            else:
-                await update.message.reply_text(f"Could not retrieve PAN information: {error_msg}")
-    
-    except Exception as e:
-        logger.error(f"Error in PAN search: {str(e)}")
-        error_str = str(e)
-        
-        # Check if the error is related to quota exceeded
-        if "exceeded the MONTHLY quota" in error_str or "quota" in error_str.lower():
-            await update.message.reply_text("SPECIAL KEY EXPIRED💀")
-        else:
-            await update.message.reply_text(f"Error: {error_str}")
-    
-    # Clean up user data
-    if user_id in user_data_dict:
-        del user_data_dict[user_id]
-    
-    # Show the simple menu after search is complete
-    await show_simple_menu(update, context)
-    
-    return ConversationHandler.END
 
 # Cancel conversation
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -562,46 +634,197 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         logger.error(f"Error in social search: {str(e)}")
         await update.message.reply_text(f"Error: {str(e)}")
 
-# Breach check function
+# Breach check function using doxit.me API
 async def breach_check(update: Update, email: str):
     # If the email is "Back to Menu", ignore it
     if email == "⬅️ Back to Menu":
         return
         
     try:
-        # HIBP API endpoint
-        url = f'{HIBP_API_URL}{email}'
+        # Send a "searching" message
+        searching_message = await update.message.reply_text("🔍 Checking for breaches... This may take a moment.")
         
-        # Headers
+        # doxit.me API endpoint
+        api_url = f"{BREACH_API}{email}"
+        logger.info(f"Calling breach API: {api_url}")
+        
+        # Make direct API call since doxit.me returns the data directly
         headers = {
-            'hibp-api-key': HIBP_API_KEY,
-            'User-Agent': 'TelegramBot'
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
         }
         
-        # Make the API request
-        response = requests.get(url, headers=headers)
+        response = requests.get(api_url, headers=headers, timeout=10.0)
         
-        # Handle the response
+        # Delete the "searching" message
+        await searching_message.delete()
+        
         if response.status_code == 200:
-            breaches = response.json()
-            breach_count = len(breaches)
-            
-            # Create message with breach information
-            result = f"⚠️ *Email Breach Alert* ⚠️\n\n"
-            result += f"The email `{email}` has been found in *{breach_count} data breaches*:\n\n"
-            
-            # Add only breach platform names in a simple list
-            for i, breach in enumerate(breaches):
-                breach_name = breach.get('Name', 'Unknown')
-                result += f"• `{breach_name}`\n"
-            
-            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
-        elif response.status_code == 404:
-            await update.message.reply_text(f"✅ Good news! The email `{email}` has NOT been found in any known data breaches.", parse_mode=ParseMode.MARKDOWN)
+            try:
+                breach_data = response.json()
+                
+                # Check if the response contains breach information
+                if 'breaches' in breach_data and breach_data['breaches']:
+                    breaches = breach_data['breaches']
+                    breach_count = len(breaches)
+                    
+                    # Create message with breach information
+                    result = f"⚠️ *Email Breach Alert* ⚠️\n\n"
+                    result += f"The email `{email}` has been found in *{breach_count} data breaches*:\n\n"
+                    
+                    # Display breach information with more details
+                    for i, breach in enumerate(breaches):
+                        breach_name = breach.get('Name', 'Unknown')
+                        breach_date = breach.get('BreachDate', 'Unknown')
+                        description = breach.get('Description', 'No description available')
+                        data_classes = breach.get('DataClasses', [])
+                        
+                        result += f"🔴 *{breach_name}*\n"
+                        result += f"📅 Date: `{breach_date}`\n"
+                        result += f"📝 Info: {description}\n"
+                        
+                        if data_classes:
+                            data_types = ", ".join(data_classes)
+                            result += f"💾 Data: `{data_types}`\n"
+                        
+                        result += "\n"
+                        
+                        # Split message if it gets too long (Telegram limit is 4096 chars)
+                        if len(result) > 3500:
+                            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                            result = f"*Continued breaches for {email}:*\n\n"
+                    
+                    # Send final message if there's remaining content
+                    if result.strip() and not result.startswith("*Continued breaches"):
+                        await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                    elif result.startswith("*Continued breaches") and len(result) > 50:
+                        await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                        
+                else:
+                    # No breaches found
+                    await update.message.reply_text(f"✅ Good news! The email `{email}` has NOT been found in any known data breaches.", parse_mode=ParseMode.MARKDOWN)
+                    
+            except ValueError as e:
+                logger.error(f"Invalid JSON response: {response.text[:200]}")
+                await update.message.reply_text("Error: Invalid response from breach API")
         else:
             await update.message.reply_text(f"Error checking breach data: Status code {response.status_code}")
+            
     except Exception as e:
         logger.error(f"Error in breach check: {str(e)}")
+        await update.message.reply_text(f"Error: {str(e)}")
+
+# Vehicle info search function
+async def vehicle_search(update: Update, vehicle_number: str):
+    # If the vehicle number is "Back to Menu", ignore it
+    if vehicle_number == "⬅️ Back to Menu":
+        return
+        
+    try:
+        # Send a "searching" message
+        searching_message = await update.message.reply_text("🔍 Searching for vehicle information... This may take a moment.")
+        
+        # Clean vehicle number (remove spaces and hyphens)
+        cleaned_vehicle_number = vehicle_number.replace(" ", "").replace("-", "").upper()
+        
+        # Vehicle API endpoint
+        api_url = f"{VEHICLE_API}{cleaned_vehicle_number}?api_key={VEHICLE_API_KEY}"
+        logger.info(f"Calling vehicle API: {api_url}")
+        
+        # Make direct API call
+        headers = {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+            'Accept': 'application/json',
+        }
+        
+        response = requests.get(api_url, headers=headers, timeout=10.0)
+        
+        # Delete the "searching" message
+        await searching_message.delete()
+        
+        if response.status_code == 200:
+            try:
+                vehicle_data = response.json()
+                
+                # Check if vehicle data was found
+                if vehicle_data.get("RegistrationNumber"):
+                    # Extract key information
+                    reg_number = vehicle_data.get("VehicleNumber", "N/A")
+                    owner_name = vehicle_data.get("OwnerName", "N/A")
+                    father_name = vehicle_data.get("FatherName", "N/A")
+                    mobile_number = vehicle_data.get("MobileNumber", "N/A")
+                    vehicle_class = vehicle_data.get("VehicleClass", "N/A")
+                    vehicle_model = vehicle_data.get("VehicleModel", "N/A")
+                    maker_desc = vehicle_data.get("MakerDesc", "N/A")
+                    fuel = vehicle_data.get("Fuel", "N/A")
+                    color = vehicle_data.get("Color", "N/A")
+                    reg_date = vehicle_data.get("RegistrationDate", "N/A")
+                    rc_expiry = vehicle_data.get("RCExpiryDate", "N/A")
+                    vehicle_status = vehicle_data.get("VehicleStatus", "N/A")
+                    permanent_address = vehicle_data.get("PermanentAddress", "N/A")
+                    present_address = vehicle_data.get("PresentAddress", "N/A")
+                    insurance_company = vehicle_data.get("InsuranceCompany", "N/A")
+                    insurance_upto = vehicle_data.get("InsuranceUpto", "N/A")
+                    pucc_upto = vehicle_data.get("PUCCUpto", "N/A")
+                    rto_name = vehicle_data.get("RTOName", "N/A")
+                    chasi_no = vehicle_data.get("ChasiNo", "N/A")
+                    engine_no = vehicle_data.get("EngineNo", "N/A")
+                    
+                    # Create comprehensive result message
+                    result = f"🚗 *Vehicle Information Found*\n\n"
+                    
+                    # Owner Details
+                    result += f"👤 *Owner Information:*\n"
+                    result += f"• Name: `{owner_name}`\n"
+                    result += f"• Father's Name: `{father_name}`\n"
+                    result += f"• Mobile: `{mobile_number}`\n\n"
+                    
+                    # Vehicle Details
+                    result += f"🚙 *Vehicle Details:*\n"
+                    result += f"• Number: `{reg_number}`\n"
+                    result += f"• Status: `{vehicle_status}`\n"
+                    result += f"• Class: `{vehicle_class}`\n"
+                    result += f"• Model: `{vehicle_model}`\n"
+                    result += f"• Manufacturer: `{maker_desc}`\n"
+                    result += f"• Fuel: `{fuel}`\n"
+                    result += f"• Color: `{color}`\n\n"
+                    
+                    # Registration & Dates
+                    result += f"📅 *Registration & Validity:*\n"
+                    result += f"• Reg Date: `{reg_date}`\n"
+                    result += f"• RC Expiry: `{rc_expiry}`\n"
+                    result += f"• RTO: `{rto_name}`\n\n"
+                    
+                    await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                    
+                    # Send second message with additional details
+                    result2 = f"📍 *Address Information:*\n"
+                    result2 += f"• Permanent: `{permanent_address}`\n"
+                    result2 += f"• Present: `{present_address}`\n\n"
+                    
+                    result2 += f"🔢 *Technical Details:*\n"
+                    result2 += f"• Chassis No: `{chasi_no}`\n"
+                    result2 += f"• Engine No: `{engine_no}`\n\n"
+                    
+                    result2 += f"🛡️ *Insurance & PUC:*\n"
+                    result2 += f"• Insurance: `{insurance_company}`\n"
+                    result2 += f"• Insurance Valid Till: `{insurance_upto}`\n"
+                    result2 += f"• PUC Valid Till: `{pucc_upto}`"
+                    
+                    await update.message.reply_text(result2, parse_mode=ParseMode.MARKDOWN)
+                    
+                else:
+                    # No vehicle data found
+                    await update.message.reply_text(f"❌ No vehicle information found for: {vehicle_number}")
+                    
+            except ValueError as e:
+                logger.error(f"Invalid JSON response: {response.text[:200]}")
+                await update.message.reply_text("Error: Invalid response from vehicle API")
+        else:
+            await update.message.reply_text(f"Error checking vehicle data: Status code {response.status_code}")
+            
+    except Exception as e:
+        logger.error(f"Error in vehicle search: {str(e)}")
         await update.message.reply_text(f"Error: {str(e)}")
 
 # Main menu function with full welcome message
@@ -610,7 +833,7 @@ async def show_welcome_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ["Mobile Search 📱", "Aadhar Search 🔎"],
         ["Social Media Search 🌐", "Breach Check 🔒"],
-        ["Age Check 👶", "PAN Details 💳"]
+        ["Age Check 👶", "Vehicle Info 🚗"]
     ]
     
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -624,7 +847,7 @@ async def show_welcome_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "• Social Media Profiles\n"
         "• Email Breach Check\n"
         "• Age Check from Aadhar\n"
-        "• PAN Details from Aadhar\n\n"
+        "• Vehicle RC Information\n\n"
         "*👨‍💻 Developer:* @icodeinbinary\n\n"
         "*Select an option below👇*",
         parse_mode=ParseMode.MARKDOWN,
@@ -639,7 +862,7 @@ async def show_simple_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ["Mobile Search 📱", "Aadhar Search 🔎"],
         ["Social Media Search 🌐", "Breach Check 🔒"],
-        ["Age Check 👶", "PAN Details 💳"]
+        ["Age Check 👶", "Vehicle Info 🚗"]
     ]
     
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -666,6 +889,10 @@ async def show_simple_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     
+    # Check channel membership first
+    if not await verify_membership_middleware(update, context):
+        return ConversationHandler.END
+    
     # Handle first-time users with welcome message
     if text.lower() in ['/start', 'start', 'hi', 'hello']:
         return await show_welcome_menu(update, context)
@@ -688,7 +915,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"• Social Media Search - Find social profiles by name/username\n"
             f"• Breach Check - Check if email was in data breaches\n"
             f"• Age Check - Get age range from Aadhar number\n"
-            f"• PAN Details - Get PAN details from Aadhar number\n\n"
+            f"• Vehicle Info - Get RC details by vehicle number\n\n"
             f"Use /start to see the welcome message\n"
             f"Use /end to show the menu buttons\n\n"
             f"Developer: @icodeinbinary",
@@ -745,17 +972,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_data_dict[update.effective_user.id] = {"next_action": "age_search"}
         return ENTER_AGE
     
-    elif text == "PAN Details 💳":
+    elif text == "Vehicle Info 🚗":
         # Create keyboard with back button
         keyboard = [["⬅️ Back to Menu"]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
         
         await update.message.reply_text(
-            "Please enter a 12-digit Aadhar number to get PAN details:",
+            "Please enter a vehicle number (e.g., DL10AD7414, DL-10-AD-7414):",
             reply_markup=reply_markup
         )
-        user_data_dict[update.effective_user.id] = {"next_action": "pan_search"}
-        return ENTER_AADHAR
+        user_data_dict[update.effective_user.id] = {"next_action": "vehicle_search"}
+        return ENTER_VEHICLE
     
     elif text == "Breach Check 🔒":
         # Create keyboard with back button
@@ -796,8 +1023,11 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Handle mobile number input
 async def handle_mobile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     text = update.message.text
+    
+    # Check channel membership first
+    if not await verify_membership_middleware(update, context):
+        return ConversationHandler.END
     
     # Check if user wants to go back to menu
     if text == "⬅️ Back to Menu":
@@ -820,8 +1050,11 @@ async def handle_mobile_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # Handle Aadhar number input
 async def handle_aadhar_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     text = update.message.text
+    
+    # Check channel membership first
+    if not await verify_membership_middleware(update, context):
+        return ConversationHandler.END
     
     # Check if user wants to go back to menu
     if text == "⬅️ Back to Menu":
@@ -829,6 +1062,7 @@ async def handle_aadhar_input(update: Update, context: ContextTypes.DEFAULT_TYPE
     
     # Check if it's a valid Aadhar number
     if text.isdigit() and len(text) == 12:
+        user_id = update.effective_user.id
         if user_id in user_data_dict:
             next_action = user_data_dict[user_id].get("next_action")
             
@@ -839,17 +1073,7 @@ async def handle_aadhar_input(update: Update, context: ContextTypes.DEFAULT_TYPE
                 # Call the existing aadhar search function
                 await aadhar_search(update, text)
             
-            elif next_action == "pan_search":
-                # Store the Aadhar number for PAN search
-                user_data_dict[user_id]["aadhar_number"] = text
-                
-                # Ask for the API key
-                await update.message.reply_text(
-                    "Please enter your Special Key🔑 for the Aadhaar to PAN API.\n\n"
-                    "If you don't have one, you can get it from 👉  @icodeinbinary\n"
-                )
-                
-                return ENTER_API_KEY
+
         
         # Show the simple menu after search is complete
         await show_simple_menu(update, context)
@@ -860,8 +1084,11 @@ async def handle_aadhar_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # Handle social search input
 async def handle_social_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     query = update.message.text
+    
+    # Check channel membership first
+    if not await verify_membership_middleware(update, context):
+        return ConversationHandler.END
     
     # Check if user wants to go back to menu
     if query == "⬅️ Back to Menu":
@@ -883,8 +1110,11 @@ async def handle_social_input(update: Update, context: ContextTypes.DEFAULT_TYPE
 
 # Handle age check input
 async def handle_age_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     text = update.message.text
+    
+    # Check channel membership first
+    if not await verify_membership_middleware(update, context):
+        return ConversationHandler.END
     
     # Check if user wants to go back to menu
     if text == "⬅️ Back to Menu":
@@ -910,8 +1140,11 @@ async def handle_age_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Handle email input for breach check
 async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
     email = update.message.text
+    
+    # Check channel membership first
+    if not await verify_membership_middleware(update, context):
+        return ConversationHandler.END
     
     # Check if user wants to go back to menu
     if email == "⬅️ Back to Menu":
@@ -929,6 +1162,33 @@ async def handle_email_input(update: Update, context: ContextTypes.DEFAULT_TYPE)
         await show_simple_menu(update, context)
     else:
         await update.message.reply_text("Invalid email address! Please enter a valid email.")
+    
+    return ConversationHandler.END
+
+# Handle vehicle number input
+async def handle_vehicle_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    vehicle_number = update.message.text
+    
+    # Check channel membership first
+    if not await verify_membership_middleware(update, context):
+        return ConversationHandler.END
+    
+    # Check if user wants to go back to menu
+    if vehicle_number == "⬅️ Back to Menu":
+        return await show_simple_menu(update, context)
+    
+    # Basic vehicle number validation (should have alphanumeric characters)
+    if len(vehicle_number.replace(" ", "").replace("-", "")) >= 8:
+        # Send a message that we're processing
+        await update.message.reply_text(f"Searching for vehicle: {vehicle_number}...")
+        
+        # Call the vehicle search function
+        await vehicle_search(update, vehicle_number)
+        
+        # Show the simple menu after search is complete
+        await show_simple_menu(update, context)
+    else:
+        await update.message.reply_text("Invalid vehicle number! Please enter a valid vehicle registration number.")
     
     return ConversationHandler.END
 
@@ -951,13 +1211,16 @@ if __name__ == "__main__":
             ENTER_AADHAR: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_aadhar_input)],
             ENTER_SOCIAL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_social_input)],
             ENTER_AGE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_age_input)],
-            ENTER_API_KEY: [MessageHandler(filters.TEXT & ~filters.COMMAND, process_api_key)],
-            ENTER_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)]
+            ENTER_EMAIL: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_email_input)],
+            ENTER_VEHICLE: [MessageHandler(filters.TEXT & ~filters.COMMAND, handle_vehicle_input)]
         },
         fallbacks=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)]
     )
     
     app.add_handler(conv_handler)
+    
+    # Add callback query handler for membership verification
+    app.add_handler(CallbackQueryHandler(handle_callback_query))
     
     # Run the bot
     print("Starting bot...")
