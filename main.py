@@ -44,7 +44,7 @@ SOCIAL_LINKS_API_KEY = "525a6a5a93msh3b9d06f41651572p16ef82jsnfb8eeb3cc004"
 BREACH_API = "https://doxit.me/?key=icodeinbinary&breach="
 
 # API Maintenance Flags - Set to True to enable maintenance mode
-MOBILE_API_MAINTENANCE = Ture
+MOBILE_API_MAINTENANCE = True
 AADHAR_API_MAINTENANCE = True
 AGE_API_MAINTENANCE = True
 VEHICLE_API_MAINTENANCE = True
