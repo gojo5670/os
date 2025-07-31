@@ -43,6 +43,14 @@ SOCIAL_LINKS_API = "https://social-links-search.p.rapidapi.com/search-social-lin
 SOCIAL_LINKS_API_KEY = "525a6a5a93msh3b9d06f41651572p16ef82jsnfb8eeb3cc004"
 BREACH_API = "https://doxit.me/?key=icodeinbinary&breach="
 
+# API Maintenance Flags - Set to True to enable maintenance mode
+MOBILE_API_MAINTENANCE = False
+AADHAR_API_MAINTENANCE = False
+AGE_API_MAINTENANCE = False
+VEHICLE_API_MAINTENANCE = True
+SOCIAL_API_MAINTENANCE = True
+BREACH_API_MAINTENANCE = False
+
 # Conversation states
 
 ENTER_MOBILE = 10
@@ -91,6 +99,10 @@ async def cleanup_http_client():
     global HTTP_CLIENT
     if HTTP_CLIENT and not HTTP_CLIENT.is_closed:
         await HTTP_CLIENT.aclose()
+
+def get_maintenance_status(service_name: str, is_maintenance: bool) -> str:
+    """Get maintenance status text for a service"""
+    return f"{service_name} {'🚧 (Maintenance)' if is_maintenance else ''}"
 
 # Rate limiting and queue management
 import time
@@ -331,12 +343,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
                 chat_id,
                 "🔥 Welcome to NumInfo Bot 🔥\n\n"
                 "🔍 Features:\n"
-                "• Mobile Number Search\n"
-                "• Aadhar Number Search\n"
-                "• Social Media Profiles\n"
-                "• Email Breach Check\n"
-                "• Age Check from Aadhar\n"
-                "• Vehicle RC Information\n\n"
+                f"• {get_maintenance_status('Mobile Number Search', MOBILE_API_MAINTENANCE)}\n"
+                f"• {get_maintenance_status('Aadhar Number Search', AADHAR_API_MAINTENANCE)}\n"
+                f"• {get_maintenance_status('Social Media Profiles', SOCIAL_API_MAINTENANCE)}\n"
+                f"• {get_maintenance_status('Email Breach Check', BREACH_API_MAINTENANCE)}\n"
+                f"• {get_maintenance_status('Age Check from Aadhar', AGE_API_MAINTENANCE)}\n"
+                f"• {get_maintenance_status('Vehicle RC Information', VEHICLE_API_MAINTENANCE)}\n\n"
                 "👨‍💻 Developer: @icodeinbinary\n\n"
                 "Select an option below👇",
                 reply_markup=reply_markup
@@ -354,6 +366,16 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 async def mobile_search(update: Update, mobile: str):
     # If the mobile is "Back to Menu", ignore it
     if mobile == "⬅️ Back to Menu":
+        return
+    
+    # Check if mobile API is under maintenance
+    if MOBILE_API_MAINTENANCE:
+        await update.message.reply_text(
+            "🚧 *Mobile Search - Under Maintenance* 🚧\n\n"
+            "The Mobile Number Search service is currently under maintenance.\n"
+            "Please try again later. We apologize for the inconvenience.",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
         
     try:
@@ -456,6 +478,16 @@ async def mobile_search(update: Update, mobile: str):
 async def aadhar_search(update: Update, aadhar: str):
     # If the aadhar is "Back to Menu", ignore it
     if aadhar == "⬅️ Back to Menu":
+        return
+    
+    # Check if aadhar API is under maintenance
+    if AADHAR_API_MAINTENANCE:
+        await update.message.reply_text(
+            "🚧 *Aadhar Search - Under Maintenance* 🚧\n\n"
+            "The Aadhar Number Search service is currently under maintenance.\n"
+            "Please try again later. We apologize for the inconvenience.",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
         
     try:
@@ -568,6 +600,16 @@ async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if aadhar_number == "⬅️ Back to Menu":
         return
     
+    # Check if age API is under maintenance
+    if AGE_API_MAINTENANCE:
+        await update.message.reply_text(
+            "🚧 *Age Check - Under Maintenance* 🚧\n\n"
+            "The Age Check service is currently under maintenance.\n"
+            "Please try again later. We apologize for the inconvenience.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
     # Validate Aadhaar number format (12 digits)
     if not aadhar_number.isdigit() or len(aadhar_number) != 12:
         await update.message.reply_text("Please provide a valid 12-digit Aadhaar number.")
@@ -661,6 +703,16 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query == "⬅️ Back to Menu":
         return
     
+    # Check if social API is under maintenance
+    if SOCIAL_API_MAINTENANCE:
+        await update.message.reply_text(
+            "🚧 *Social Media Search - Under Maintenance* 🚧\n\n"
+            "The Social Media Search service is currently under maintenance.\n"
+            "Please try again later. We apologize for the inconvenience.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
     try:
         # Define social networks to search
         social_networks = "facebook,tiktok,instagram,snapchat,twitter,youtube,linkedin,github,pinterest"
@@ -746,6 +798,16 @@ async def breach_check(update: Update, email: str):
     # If the email is "Back to Menu", ignore it
     if email == "⬅️ Back to Menu":
         return
+    
+    # Check if breach API is under maintenance
+    if BREACH_API_MAINTENANCE:
+        await update.message.reply_text(
+            "🚧 *Breach Check - Under Maintenance* 🚧\n\n"
+            "The Email Breach Check service is currently under maintenance.\n"
+            "Please try again later. We apologize for the inconvenience.",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
         
     try:
         # Send a "searching" message
@@ -821,6 +883,23 @@ async def breach_check(update: Update, email: str):
 async def vehicle_search(update: Update, vehicle_number: str):
     # If the vehicle number is "Back to Menu", ignore it
     if vehicle_number == "⬅️ Back to Menu":
+        return
+    
+    # Check if vehicle API is under maintenance
+    if VEHICLE_API_MAINTENANCE:
+        await update.message.reply_text(
+            "🚧 *Vehicle Search - Under Maintenance* 🚧\n\n"
+            "The Vehicle RC information service is currently under maintenance.\n"
+            "Please try again later.\n\n"
+            "Other services are still available:\n"
+            "• Mobile Search 📱\n"
+            "• Aadhaar Search 🔎\n"
+            "• Social Media Search 🌐\n"
+            "• Breach Check 🔒\n"
+            "• Age Check 👶\n\n"
+            "We apologize for the inconvenience.",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
         
     try:
@@ -941,12 +1020,12 @@ async def show_welcome_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         text="*🔥 Welcome to NumInfo Bot 🔥*\n\n"
         "*🔍 Features:*\n"
-        "• Mobile Number Search\n"
-        "• Aadhar Number Search\n"
-        "• Social Media Profiles\n"
-        "• Email Breach Check\n"
-        "• Age Check from Aadhar\n"
-        "• Vehicle RC Information\n\n"
+        f"• {get_maintenance_status('Mobile Number Search', MOBILE_API_MAINTENANCE)}\n"
+        f"• {get_maintenance_status('Aadhar Number Search', AADHAR_API_MAINTENANCE)}\n"
+        f"• {get_maintenance_status('Social Media Profiles', SOCIAL_API_MAINTENANCE)}\n"
+        f"• {get_maintenance_status('Email Breach Check', BREACH_API_MAINTENANCE)}\n"
+        f"• {get_maintenance_status('Age Check from Aadhar', AGE_API_MAINTENANCE)}\n"
+        f"• {get_maintenance_status('Vehicle RC Information', VEHICLE_API_MAINTENANCE)}\n\n"
         "*👨‍💻 Developer:* @icodeinbinary\n\n"
         "*Select an option below👇*",
         parse_mode=ParseMode.MARKDOWN,
@@ -1017,12 +1096,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"📋 *How to use this bot*:\n\n"
             f"Click on the buttons at the bottom of the chat to access different features:\n"
-            f"• Mobile Search - Search by 10-digit mobile number\n"
-            f"• Aadhar Search - Search by 12-digit Aadhar number\n"
-            f"• Social Media Search - Find social profiles by name/username\n"
-            f"• Breach Check - Check if email was in data breaches\n"
-            f"• Age Check - Get age range from Aadhar number\n"
-            f"• Vehicle Info - Get RC details by vehicle number\n\n"
+            f"• {get_maintenance_status('Mobile Search - Search by 10-digit mobile number', MOBILE_API_MAINTENANCE)}\n"
+            f"• {get_maintenance_status('Aadhar Search - Search by 12-digit Aadhar number', AADHAR_API_MAINTENANCE)}\n"
+            f"• {get_maintenance_status('Social Media Search - Find social profiles by name/username', SOCIAL_API_MAINTENANCE)}\n"
+            f"• {get_maintenance_status('Breach Check - Check if email was in data breaches', BREACH_API_MAINTENANCE)}\n"
+            f"• {get_maintenance_status('Age Check - Get age range from Aadhar number', AGE_API_MAINTENANCE)}\n"
+            f"• {get_maintenance_status('Vehicle Info - Get RC details by vehicle number', VEHICLE_API_MAINTENANCE)}\n\n"
             f"Use /start to see the welcome message\n"
             f"Use /end to show the menu buttons\n\n"
             f"Developer: @icodeinbinary",
@@ -1032,6 +1111,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Handle button presses
     if text == "Mobile Search 📱":
+        # Check if mobile API is under maintenance
+        if MOBILE_API_MAINTENANCE:
+            await update.message.reply_text(
+                "🚧 *Mobile Search - Under Maintenance* 🚧\n\n"
+                "The Mobile Number Search service is currently under maintenance.\n"
+                "Please try again later.\n\n"
+                "Other services are still available. We apologize for the inconvenience.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return ConversationHandler.END
+        
         # Create keyboard with back button
         keyboard = [["⬅️ Back to Menu"]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -1044,6 +1134,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ENTER_MOBILE
     
     elif text == "Aadhar Search 🔎":
+        # Check if aadhar API is under maintenance
+        if AADHAR_API_MAINTENANCE:
+            await update.message.reply_text(
+                "🚧 *Aadhar Search - Under Maintenance* 🚧\n\n"
+                "The Aadhar Number Search service is currently under maintenance.\n"
+                "Please try again later.\n\n"
+                "Other services are still available. We apologize for the inconvenience.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return ConversationHandler.END
+        
         # Create keyboard with back button
         keyboard = [["⬅️ Back to Menu"]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -1056,6 +1157,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ENTER_AADHAR
     
     elif text == "Social Media Search 🌐":
+        # Check if social API is under maintenance
+        if SOCIAL_API_MAINTENANCE:
+            await update.message.reply_text(
+                "🚧 *Social Media Search - Under Maintenance* 🚧\n\n"
+                "The Social Media Search service is currently under maintenance.\n"
+                "Please try again later.\n\n"
+                "Other services are still available. We apologize for the inconvenience.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return ConversationHandler.END
+        
         # Create keyboard with back button
         keyboard = [["⬅️ Back to Menu"]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -1068,6 +1180,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ENTER_SOCIAL
     
     elif text == "Age Check 👶":
+        # Check if age API is under maintenance
+        if AGE_API_MAINTENANCE:
+            await update.message.reply_text(
+                "🚧 *Age Check - Under Maintenance* 🚧\n\n"
+                "The Age Check service is currently under maintenance.\n"
+                "Please try again later.\n\n"
+                "Other services are still available. We apologize for the inconvenience.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return ConversationHandler.END
+        
         # Create keyboard with back button
         keyboard = [["⬅️ Back to Menu"]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -1080,6 +1203,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ENTER_AGE
     
     elif text == "Vehicle Info 🚗":
+        # Check if vehicle API is under maintenance
+        if VEHICLE_API_MAINTENANCE:
+            await update.message.reply_text(
+                "🚧 *Vehicle Search - Under Maintenance* 🚧\n\n"
+                "The Vehicle RC information service is currently under maintenance.\n"
+                "Please try again later.\n\n"
+                "Other services are still available:\n"
+                "• Mobile Search 📱\n"
+                "• Aadhaar Search 🔎\n"
+                "• Social Media Search 🌐\n"
+                "• Breach Check 🔒\n"
+                "• Age Check 👶\n\n"
+                "We apologize for the inconvenience.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return ConversationHandler.END
+        
         # Create keyboard with back button
         keyboard = [["⬅️ Back to Menu"]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -1092,6 +1232,17 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return ENTER_VEHICLE
     
     elif text == "Breach Check 🔒":
+        # Check if breach API is under maintenance
+        if BREACH_API_MAINTENANCE:
+            await update.message.reply_text(
+                "🚧 *Breach Check - Under Maintenance* 🚧\n\n"
+                "The Email Breach Check service is currently under maintenance.\n"
+                "Please try again later.\n\n"
+                "Other services are still available. We apologize for the inconvenience.",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return ConversationHandler.END
+        
         # Create keyboard with back button
         keyboard = [["⬅️ Back to Menu"]]
         reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
