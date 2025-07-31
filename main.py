@@ -16,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
+TOKEN = ("8028221566:AAEQTYPRHSQMy_3uYpDJ8kuBEowUn5WS1GI")
 
 # Admin and channel verification
 ADMIN_IDS = [1074750898]
@@ -103,6 +103,15 @@ async def cleanup_http_client():
 def get_maintenance_status(service_name: str, is_maintenance: bool) -> str:
     """Get maintenance status text for a service"""
     return f"{service_name} {'🚧' if is_maintenance else ''}"
+
+def get_maintenance_message(service_name: str, service_description: str) -> str:
+    """Get standardized maintenance message with channel link"""
+    return (
+        f"🚧 *{service_name} - Under Maintenance* 🚧\n\n"
+        f"The {service_description} service is currently under maintenance.\n"
+        f"Please try again later. We apologize for the inconvenience.\n\n"
+        f"Join https://t.me/+g0PXmxFjHWs1MTE1 for Bot related updates"
+    )
 
 # Rate limiting and queue management
 import time
@@ -371,9 +380,7 @@ async def mobile_search(update: Update, mobile: str):
     # Check if mobile API is under maintenance
     if MOBILE_API_MAINTENANCE:
         await update.message.reply_text(
-            "🚧 *Mobile Search - Under Maintenance* 🚧\n\n"
-            "The Mobile Number Search service is currently under maintenance.\n"
-            "Please try again later. We apologize for the inconvenience.",
+            get_maintenance_message("Mobile Search", "Mobile Number Search"),
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -483,9 +490,7 @@ async def aadhar_search(update: Update, aadhar: str):
     # Check if aadhar API is under maintenance
     if AADHAR_API_MAINTENANCE:
         await update.message.reply_text(
-            "🚧 *Aadhar Search - Under Maintenance* 🚧\n\n"
-            "The Aadhar Number Search service is currently under maintenance.\n"
-            "Please try again later. We apologize for the inconvenience.",
+            get_maintenance_message("Aadhar Search", "Aadhar Number Search"),
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -603,9 +608,7 @@ async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if age API is under maintenance
     if AGE_API_MAINTENANCE:
         await update.message.reply_text(
-            "🚧 *Age Check - Under Maintenance* 🚧\n\n"
-            "The Age Check service is currently under maintenance.\n"
-            "Please try again later. We apologize for the inconvenience.",
+            get_maintenance_message("Age Check", "Age Check"),
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -706,9 +709,7 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check if social API is under maintenance
     if SOCIAL_API_MAINTENANCE:
         await update.message.reply_text(
-            "🚧 *Social Media Search - Under Maintenance* 🚧\n\n"
-            "The Social Media Search service is currently under maintenance.\n"
-            "Please try again later. We apologize for the inconvenience.",
+            get_maintenance_message("Social Media Search", "Social Media Search"),
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -802,9 +803,7 @@ async def breach_check(update: Update, email: str):
     # Check if breach API is under maintenance
     if BREACH_API_MAINTENANCE:
         await update.message.reply_text(
-            "🚧 *Breach Check - Under Maintenance* 🚧\n\n"
-            "The Email Breach Check service is currently under maintenance.\n"
-            "Please try again later. We apologize for the inconvenience.",
+            get_maintenance_message("Breach Check", "Email Breach Check"),
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -888,16 +887,13 @@ async def vehicle_search(update: Update, vehicle_number: str):
     # Check if vehicle API is under maintenance
     if VEHICLE_API_MAINTENANCE:
         await update.message.reply_text(
-            "🚧 *Vehicle Search - Under Maintenance* 🚧\n\n"
-            "The Vehicle RC information service is currently under maintenance.\n"
-            "Please try again later.\n\n"
-            "Other services are still available:\n"
+            get_maintenance_message("Vehicle Search", "Vehicle RC information") + 
+            "\n\nOther services are still available:\n"
             "• Mobile Search 📱\n"
             "• Aadhaar Search 🔎\n"
             "• Social Media Search 🌐\n"
             "• Breach Check 🔒\n"
-            "• Age Check 👶\n\n"
-            "We apologize for the inconvenience.",
+            "• Age Check 👶",
             parse_mode=ParseMode.MARKDOWN
         )
         return
@@ -1114,10 +1110,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if mobile API is under maintenance
         if MOBILE_API_MAINTENANCE:
             await update.message.reply_text(
-                "🚧 *Mobile Search - Under Maintenance* 🚧\n\n"
-                "The Mobile Number Search service is currently under maintenance.\n"
-                "Please try again later.\n\n"
-                "Other services are still available. We apologize for the inconvenience.",
+                get_maintenance_message("Mobile Search", "Mobile Number Search") +
+                "\n\nOther services are still available.",
                 parse_mode=ParseMode.MARKDOWN
             )
             return ConversationHandler.END
@@ -1137,10 +1131,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if aadhar API is under maintenance
         if AADHAR_API_MAINTENANCE:
             await update.message.reply_text(
-                "🚧 *Aadhar Search - Under Maintenance* 🚧\n\n"
-                "The Aadhar Number Search service is currently under maintenance.\n"
-                "Please try again later.\n\n"
-                "Other services are still available. We apologize for the inconvenience.",
+                get_maintenance_message("Aadhar Search", "Aadhar Number Search") +
+                "\n\nOther services are still available.",
                 parse_mode=ParseMode.MARKDOWN
             )
             return ConversationHandler.END
@@ -1160,10 +1152,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if social API is under maintenance
         if SOCIAL_API_MAINTENANCE:
             await update.message.reply_text(
-                "🚧 *Social Media Search - Under Maintenance* 🚧\n\n"
-                "The Social Media Search service is currently under maintenance.\n"
-                "Please try again later.\n\n"
-                "Other services are still available. We apologize for the inconvenience.",
+                get_maintenance_message("Social Media Search", "Social Media Search") +
+                "\n\nOther services are still available.",
                 parse_mode=ParseMode.MARKDOWN
             )
             return ConversationHandler.END
@@ -1183,10 +1173,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if age API is under maintenance
         if AGE_API_MAINTENANCE:
             await update.message.reply_text(
-                "🚧 *Age Check - Under Maintenance* 🚧\n\n"
-                "The Age Check service is currently under maintenance.\n"
-                "Please try again later.\n\n"
-                "Other services are still available. We apologize for the inconvenience.",
+                get_maintenance_message("Age Check", "Age Check") +
+                "\n\nOther services are still available.",
                 parse_mode=ParseMode.MARKDOWN
             )
             return ConversationHandler.END
@@ -1206,16 +1194,13 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if vehicle API is under maintenance
         if VEHICLE_API_MAINTENANCE:
             await update.message.reply_text(
-                "🚧 *Vehicle Search - Under Maintenance* 🚧\n\n"
-                "The Vehicle RC information service is currently under maintenance.\n"
-                "Please try again later.\n\n"
-                "Other services are still available:\n"
+                get_maintenance_message("Vehicle Search", "Vehicle RC information") +
+                "\n\nOther services are still available:\n"
                 "• Mobile Search 📱\n"
                 "• Aadhaar Search 🔎\n"
                 "• Social Media Search 🌐\n"
                 "• Breach Check 🔒\n"
-                "• Age Check 👶\n\n"
-                "We apologize for the inconvenience.",
+                "• Age Check 👶",
                 parse_mode=ParseMode.MARKDOWN
             )
             return ConversationHandler.END
@@ -1235,10 +1220,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         # Check if breach API is under maintenance
         if BREACH_API_MAINTENANCE:
             await update.message.reply_text(
-                "🚧 *Breach Check - Under Maintenance* 🚧\n\n"
-                "The Email Breach Check service is currently under maintenance.\n"
-                "Please try again later.\n\n"
-                "Other services are still available. We apologize for the inconvenience.",
+                get_maintenance_message("Breach Check", "Email Breach Check") +
+                "\n\nOther services are still available.",
                 parse_mode=ParseMode.MARKDOWN
             )
             return ConversationHandler.END
