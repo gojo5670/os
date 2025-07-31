@@ -15,7 +15,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
+TOKEN = ("811431456:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
 
 # Admin and channel verification
 ADMIN_IDS = [1074750898]
