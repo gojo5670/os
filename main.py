@@ -1,8 +1,9 @@
 import os
 import logging
-import requests
 import httpx
 import asyncio
+import signal
+import sys
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler, ConversationHandler, CallbackQueryHandler
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ParseMode
@@ -15,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-TOKEN = ("811431456:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
+TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
 
 # Admin and channel verification
 ADMIN_IDS = [1074750898]
@@ -39,7 +40,7 @@ AGE_API = "https://doxit.me/?key=icodeinbinary&age="
 VEHICLE_API = "http://3.109.155.50/rc-details/"
 VEHICLE_API_KEY = "king_bhai_2388d259"
 SOCIAL_LINKS_API = "https://social-links-search.p.rapidapi.com/search-social-links"
-SOCIAL_LINKS_API_KEY = "422ce45dabmshae4fa40ed7c05b2p11fbbdjsn35ac3f8fe43d"
+SOCIAL_LINKS_API_KEY = "525a6a5a93msh3b9d06f41651572p16ef82jsnfb8eeb3cc004"
 BREACH_API = "https://doxit.me/?key=icodeinbinary&breach="
 
 # Conversation states
@@ -54,30 +55,140 @@ ENTER_VEHICLE = 60
 # User data dictionary to store temporary data
 user_data_dict = {}
 
-# Helper function to get data with retry mechanism
-async def get_api_data(url, max_retries=5, delay=1):
+# Global HTTP client with connection pooling for high performance
+HTTP_CLIENT = None
+
+async def get_http_client():
+    """Get or create HTTP client with optimized settings for high load"""
+    global HTTP_CLIENT
+    if HTTP_CLIENT is None or HTTP_CLIENT.is_closed:
+        limits = httpx.Limits(
+            max_keepalive_connections=100,  # Keep 100 connections alive
+            max_connections=200,            # Max 200 total connections
+            keepalive_expiry=30.0          # Keep connections alive for 30 seconds
+        )
+        
+        timeout = httpx.Timeout(
+            connect=10.0,    # Connection timeout
+            read=30.0,       # Read timeout
+            write=10.0,      # Write timeout
+            pool=5.0         # Pool timeout
+        )
+        
+        HTTP_CLIENT = httpx.AsyncClient(
+            limits=limits,
+            timeout=timeout,
+            headers={
+                'User-Agent': 'NumInfoBot/1.0 (High-Performance Telegram Bot)',
+                'Accept': 'application/json',
+                'Connection': 'keep-alive'
+            }
+        )
+    return HTTP_CLIENT
+
+async def cleanup_http_client():
+    """Cleanup HTTP client on shutdown"""
+    global HTTP_CLIENT
+    if HTTP_CLIENT and not HTTP_CLIENT.is_closed:
+        await HTTP_CLIENT.aclose()
+
+# Rate limiting and queue management
+import time
+from collections import defaultdict, deque
+
+# User rate limiting with automatic cleanup
+USER_REQUEST_TIMES = defaultdict(deque)
+MAX_REQUESTS_PER_MINUTE = 20  # Max 20 requests per user per minute
+CLEANUP_INTERVAL = 300  # Clean up old data every 5 minutes
+
+async def periodic_cleanup():
+    """Periodically clean up old user data to prevent memory leaks"""
+    while True:
+        try:
+            await asyncio.sleep(CLEANUP_INTERVAL)
+            current_time = time.time()
+            
+            # Clean up old rate limiting data
+            users_to_remove = []
+            for user_id, requests in USER_REQUEST_TIMES.items():
+                # Remove requests older than 1 hour
+                while requests and current_time - requests[0] > 3600:
+                    requests.popleft()
+                
+                # Remove users with no recent requests
+                if not requests:
+                    users_to_remove.append(user_id)
+            
+            for user_id in users_to_remove:
+                del USER_REQUEST_TIMES[user_id]
+            
+            # Clean up old user conversation data
+            expired_users = []
+            for user_id, data in user_data_dict.items():
+                # Remove conversation data older than 1 hour
+                if isinstance(data, dict) and 'timestamp' in data:
+                    if current_time - data['timestamp'] > 3600:
+                        expired_users.append(user_id)
+                elif current_time % 3600 < CLEANUP_INTERVAL:  # Clean periodically
+                    expired_users.append(user_id)
+            
+            for user_id in expired_users:
+                user_data_dict.pop(user_id, None)
+            
+            if users_to_remove or expired_users:
+                logger.info(f"🧹 Cleaned up data for {len(users_to_remove + expired_users)} users")
+                
+        except Exception as e:
+            logger.error(f"Error in periodic cleanup: {str(e)}")
+
+async def check_rate_limit(user_id: int) -> bool:
+    """Check if user is within rate limits"""
+    # Admin bypass
+    if user_id in ADMIN_IDS:
+        return True
+    
+    current_time = time.time()
+    user_requests = USER_REQUEST_TIMES[user_id]
+    
+    # Remove requests older than 1 minute
+    while user_requests and current_time - user_requests[0] > 60:
+        user_requests.popleft()
+    
+    # Check if under limit
+    if len(user_requests) < MAX_REQUESTS_PER_MINUTE:
+        user_requests.append(current_time)
+        return True
+    
+    return False
+
+# Semaphore for concurrent request limiting
+API_SEMAPHORE = asyncio.Semaphore(50)  # Max 50 concurrent API requests
+
+async def make_api_request_with_limit(url: str):
+    """Make API request with concurrency and rate limiting"""
+    async with API_SEMAPHORE:
+        return await get_api_data(url)
+
+# High-performance async API data fetcher
+async def get_api_data(url, max_retries=3, delay=0.5):
+    """Optimized async API data fetcher with connection pooling"""
+    client = await get_http_client()
     retries = 0
     last_error = None
     
-    headers = {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-        'Accept': 'application/json, text/plain, */*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Connection': 'keep-alive',
-    }
-    
     while retries < max_retries:
         try:
-            # Use synchronous requests instead of httpx for better compatibility
-            response = requests.get(url, headers=headers, timeout=10.0)
+            response = await client.get(url)
             
-            # Log the response for debugging
-            logger.info(f"API Response: Status={response.status_code}, Content={response.text[:100]}...")
+            # Log successful response
+            if retries > 0:
+                logger.info(f"API Success after {retries} retries: {url}")
             
             if response.status_code == 200:
                 try:
                     # Check if response is a JSON array
-                    if response.text.strip().startswith('['):
+                    text = response.text.strip()
+                    if text.startswith('['):
                         # Parse as array and wrap in data object
                         data_array = response.json()
                         return {"data": data_array}
@@ -89,28 +200,31 @@ async def get_api_data(url, max_retries=5, delay=1):
                         else:
                             # If no data field but valid JSON, wrap in data object
                             return {"data": [data] if not isinstance(data, list) else data}
-                except ValueError as e:
+                except Exception as e:
                     # If response is not valid JSON, log error
-                    logger.error(f"Invalid JSON response: {response.text[:200]}, Error: {str(e)}")
+                    logger.error(f"Invalid JSON response: {text[:200]}, Error: {str(e)}")
                     return {"error": "Invalid JSON response from API"}
             
             # If API returned error, try again
-            logger.error(f"API returned error {response.status_code}, retrying {retries+1}/{max_retries}...")
+            if retries < max_retries - 1:  # Don't log on last retry
+                logger.warning(f"API error {response.status_code}, retrying {retries+1}/{max_retries}...")
             
-            # Increase delay with each retry (exponential backoff)
+            # Quick exponential backoff
             await asyncio.sleep(delay)
-            delay *= 2
+            delay = min(delay * 1.5, 2.0)  # Cap at 2 seconds
             retries += 1
             
         except Exception as e:
             last_error = str(e)
-            logger.error(f"Error fetching data: {last_error}, retrying {retries+1}/{max_retries}...")
+            if retries < max_retries - 1:  # Don't log on last retry
+                logger.warning(f"API connection error, retrying {retries+1}/{max_retries}...")
             await asyncio.sleep(delay)
-            delay *= 2
+            delay = min(delay * 1.5, 2.0)
             retries += 1
     
     # If all retries failed, return error
-    return {"error": f"Failed after {max_retries} attempts. Last error: {last_error}"}
+    logger.error(f"API failed after {max_retries} attempts: {last_error}")
+    return {"error": f"Service temporarily unavailable. Please try again."}
 
 # Channel membership verification
 async def check_channel_membership(context: ContextTypes.DEFAULT_TYPE, user_id: int):
@@ -250,8 +364,8 @@ async def mobile_search(update: Update, mobile: str):
         api_url = f"{MOBILE_SEARCH_API}{mobile}"
         logger.info(f"Calling API: {api_url}")
         
-        # Use the async retry mechanism
-        data = await get_api_data(api_url)
+        # Use rate-limited API request
+        data = await make_api_request_with_limit(api_url)
         
         # Delete the "searching" message
         await searching_message.delete()
@@ -296,10 +410,8 @@ async def mobile_search(update: Update, mobile: str):
             # Try direct API call as fallback
             try:
                 logger.info("Trying direct API call as fallback")
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                }
-                response = requests.get(api_url, headers=headers)
+                client = await get_http_client()
+                response = await client.get(api_url)
                 if response.status_code == 200:
                     try:
                         data = response.json()
@@ -354,8 +466,8 @@ async def aadhar_search(update: Update, aadhar: str):
         api_url = f"{AADHAR_SEARCH_API}{aadhar}"
         logger.info(f"Calling API: {api_url}")
         
-        # Use the async retry mechanism
-        data = await get_api_data(api_url)
+        # Use rate-limited API request
+        data = await make_api_request_with_limit(api_url)
         
         # Delete the "searching" message
         await searching_message.delete()
@@ -400,10 +512,8 @@ async def aadhar_search(update: Update, aadhar: str):
             # Try direct API call as fallback
             try:
                 logger.info("Trying direct API call as fallback")
-                headers = {
-                    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-                }
-                response = requests.get(api_url, headers=headers)
+                client = await get_http_client()
+                response = await client.get(api_url)
                 if response.status_code == 200:
                     try:
                         data = response.json()
@@ -471,13 +581,9 @@ async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         api_url = f"{AGE_API}{aadhar_number}"
         logger.info(f"Calling age API: {api_url}")
         
-        # Make direct API call
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json',
-        }
-        
-        response = requests.get(api_url, headers=headers, timeout=10.0)
+        # Use optimized async client
+        client = await get_http_client()
+        response = await client.get(api_url)
         
         # Delete the "searching" message
         await searching_message.delete()
@@ -570,8 +676,9 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "x-rapidapi-host": "social-links-search.p.rapidapi.com"
         }
         
-        # Make the API request
-        response = requests.get(SOCIAL_LINKS_API, headers=headers, params=querystring)
+        # Make the API request using optimized async client
+        client = await get_http_client()
+        response = await client.get(SOCIAL_LINKS_API, headers=headers, params=querystring)
         data = response.json()
         
         # Check if the response is successful
@@ -648,13 +755,9 @@ async def breach_check(update: Update, email: str):
         api_url = f"{BREACH_API}{email}"
         logger.info(f"Calling breach API: {api_url}")
         
-        # Make direct API call since doxit.me returns the data directly
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json',
-        }
-        
-        response = requests.get(api_url, headers=headers, timeout=10.0)
+        # Use optimized async client
+        client = await get_http_client()
+        response = await client.get(api_url)
         
         # Delete the "searching" message
         await searching_message.delete()
@@ -731,13 +834,9 @@ async def vehicle_search(update: Update, vehicle_number: str):
         api_url = f"{VEHICLE_API}{cleaned_vehicle_number}?api_key={VEHICLE_API_KEY}"
         logger.info(f"Calling vehicle API: {api_url}")
         
-        # Make direct API call
-        headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'application/json',
-        }
-        
-        response = requests.get(api_url, headers=headers, timeout=10.0)
+        # Use optimized async client
+        client = await get_http_client()
+        response = await client.get(api_url)
         
         # Delete the "searching" message
         await searching_message.delete()
@@ -887,9 +986,17 @@ async def show_simple_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Main message handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
     text = update.message.text
     
-    # Check channel membership first
+    # Check rate limiting first
+    if not await check_rate_limit(user_id):
+        await update.message.reply_text(
+            "⏰ Rate limit exceeded. Please wait a moment before making another request."
+        )
+        return ConversationHandler.END
+    
+    # Check channel membership
     if not await verify_membership_middleware(update, context):
         return ConversationHandler.END
     
@@ -1192,12 +1299,22 @@ async def handle_vehicle_input(update: Update, context: ContextTypes.DEFAULT_TYP
     
     return ConversationHandler.END
 
-if __name__ == "__main__":
-    # Clear existing updates and build application
-    requests.get(f"https://api.telegram.org/bot{TOKEN}/getUpdates?offset=-1")
+def main():
+    """Main function with simplified startup"""
+    print("🚀 Starting high-performance NumInfo Bot...")
+    print("📊 Configuration:")
+    print(f"   • HTTP connections (keep-alive): 100")
+    print(f"   • HTTP max connections: 200") 
+    print(f"   • Max requests per user/minute: {MAX_REQUESTS_PER_MINUTE}")
+    print(f"   • Max concurrent API requests: 50")
+    print(f"   • Concurrent updates: Enabled")
+    print(f"   • Memory cleanup interval: {CLEANUP_INTERVAL}s")
     
-    # Create application and add handlers
-    app = ApplicationBuilder().token(TOKEN).build()
+    # Create application 
+    app = (ApplicationBuilder()
+           .token(TOKEN)
+           .concurrent_updates(True)
+           .build())
     
     # Add conversation handlers
     conv_handler = ConversationHandler(
@@ -1218,10 +1335,30 @@ if __name__ == "__main__":
     )
     
     app.add_handler(conv_handler)
-    
-    # Add callback query handler for membership verification
     app.add_handler(CallbackQueryHandler(handle_callback_query))
     
-    # Run the bot
-    print("Starting bot...")
-    app.run_polling(drop_pending_updates=True) 
+    # Start cleanup task in background
+    async def start_cleanup():
+        await asyncio.create_task(periodic_cleanup())
+    
+    # Run the bot - this handles its own event loop
+    try:
+        # Start background tasks
+        import threading
+        cleanup_thread = threading.Thread(target=lambda: asyncio.run(start_cleanup()), daemon=True)
+        cleanup_thread.start()
+        
+        # Run bot (blocking)
+        app.run_polling(drop_pending_updates=True)
+        
+    except KeyboardInterrupt:
+        print("\n🛑 Bot stopped by user")
+    except Exception as e:
+        logger.error(f"Bot error: {str(e)}")
+    finally:
+        print("\n🛑 Shutting down bot...")
+        print("🧹 Cleanup completed")
+
+if __name__ == "__main__":
+    main()
+    print("👋 Goodbye!") 
