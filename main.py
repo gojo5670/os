@@ -412,7 +412,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             # Send welcome message with keyboard
             await context.bot.send_message(
                 chat_id,
-                "🔥 Welcome to NumInfo Bot 🔥\n\n"
+                "🔥 Welcome to Mr.Detective Bot 🔥\n\n"
                 "🔍 Features:\n"
                 f"• {get_maintenance_status('Mobile Number Search', MOBILE_API_MAINTENANCE)}\n"
                 f"• {get_maintenance_status('Aadhar Number Search', AADHAR_API_MAINTENANCE)}\n"
@@ -1224,7 +1224,7 @@ async def show_welcome_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # Send the welcome message with the keyboard
     await update.message.reply_text(
-        text="*🔥 Welcome to NumInfo Bot 🔥*\n\n"
+        text="*🔥 Welcome to Mr.Detective Bot 🔥*\n\n"
         "*🔍 Features:*\n"
         f"• {get_maintenance_status('Mobile Number Search', MOBILE_API_MAINTENANCE)}\n"
         f"• {get_maintenance_status('Aadhar Number Search', AADHAR_API_MAINTENANCE)}\n"
