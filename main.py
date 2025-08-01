@@ -2,10 +2,8 @@ import os
 import logging
 import httpx
 import asyncio
-import signal
-import sys
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler, ConversationHandler, CallbackQueryHandler
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton
 from telegram.constants import ParseMode
 
 # Configure logging
