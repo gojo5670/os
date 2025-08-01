@@ -1277,7 +1277,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check rate limiting first
     if not await check_rate_limit(user_id):
         await update.message.reply_text(
-            "⏰ Rate limit exceeded. Chill out.. a moment before making another request."
+            "⏰ Rate limit exceeded. Chill out.. 1 Minute before making another request."
         )
         return ConversationHandler.END
     
