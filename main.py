@@ -101,7 +101,6 @@ async def get_http_client() -> httpx.AsyncClient:
 
 async def cleanup_http_client() -> None:
     """Cleanup HTTP client on shutdown"""
-    global HTTP_CLIENT
     if HTTP_CLIENT and not HTTP_CLIENT.is_closed:
         await HTTP_CLIENT.aclose()
 
