@@ -33,6 +33,7 @@ REQUIRED_CHANNELS = [
     }
 ]
 
+
 # Get environment variables
 MOBILE_SEARCH_API = os.getenv("MOBILE_SEARCH_API", "https://doxit.me/?key=icodeinbinary&mobile=")
 AADHAR_SEARCH_API = os.getenv("AADHAR_SEARCH_API", "https://doxit.me/?key=icodeinbinary&aadhaar=")
@@ -43,13 +44,17 @@ SOCIAL_LINKS_API = "https://social-links-search.p.rapidapi.com/search-social-lin
 SOCIAL_LINKS_API_KEY = "525a6a5a93msh3b9d06f41651572p16ef82jsnfb8eeb3cc004"
 BREACH_API = "https://doxit.me/?key=icodeinbinary&breach="
 
+# Quote API for cooldown messages
+QUOTES_API = "https://quotes15.p.rapidapi.com/quotes/random/?language_code=en"
+QUOTES_API_KEY = "422ce45dabmshae4fa40ed7c05b2p11fbbdjsn35ac3f8fe43d"
+
 # API Maintenance Flags - Set to True to enable maintenance mode
-MOBILE_API_MAINTENANCE = True
-AADHAR_API_MAINTENANCE = True
-AGE_API_MAINTENANCE = True
+MOBILE_API_MAINTENANCE = False
+AADHAR_API_MAINTENANCE = False
+AGE_API_MAINTENANCE = False
 VEHICLE_API_MAINTENANCE = True
 SOCIAL_API_MAINTENANCE = True
-BREACH_API_MAINTENANCE = True
+BREACH_API_MAINTENANCE = False
 
 # Conversation states
 
@@ -119,7 +124,10 @@ from collections import defaultdict, deque
 
 # User rate limiting with automatic cleanup
 USER_REQUEST_TIMES = defaultdict(deque)
-MAX_REQUESTS_PER_MINUTE = 20  # Max 20 requests per user per minute
+USER_LAST_API_CALL = defaultdict(float)  # Track last API call time per user
+
+MAX_REQUESTS_PER_MINUTE = 5  # Max 20 requests per user per minute
+API_COOLDOWN_SECONDS = 60  # 60 second cooldown after API response
 CLEANUP_INTERVAL = 300  # Clean up old data every 5 minutes
 
 async def periodic_cleanup():
@@ -142,6 +150,15 @@ async def periodic_cleanup():
             
             for user_id in users_to_remove:
                 del USER_REQUEST_TIMES[user_id]
+            
+            # Clean up old API call and button press data
+            api_users_to_remove = []
+            for user_id, last_call_time in USER_LAST_API_CALL.items():
+                if current_time - last_call_time > 3600:  # Remove data older than 1 hour
+                    api_users_to_remove.append(user_id)
+            
+            for user_id in api_users_to_remove:
+                del USER_LAST_API_CALL[user_id]
             
             # Clean up old user conversation data
             expired_users = []
@@ -181,6 +198,51 @@ async def check_rate_limit(user_id: int) -> bool:
         return True
     
     return False
+
+async def check_api_cooldown(user_id: int) -> tuple[bool, int]:
+    """Check if user is within API cooldown period. Returns (is_allowed, remaining_seconds)"""
+    # Admin bypass
+    if user_id in ADMIN_IDS:
+        return True, 0
+    
+    current_time = time.time()
+    last_api_call = USER_LAST_API_CALL.get(user_id, 0)
+    time_since_last_call = current_time - last_api_call
+    
+    if time_since_last_call >= API_COOLDOWN_SECONDS:
+        return True, 0
+    else:
+        remaining = int(API_COOLDOWN_SECONDS - time_since_last_call)
+        return False, remaining
+
+
+
+async def set_api_cooldown(user_id: int):
+    """Set API cooldown for user after successful API call"""
+    USER_LAST_API_CALL[user_id] = time.time()
+
+async def get_random_quote():
+    """Fetch a random quote for cooldown messages"""
+    try:
+        client = await get_http_client()
+        headers = {
+            'x-rapidapi-key': QUOTES_API_KEY,
+            'x-rapidapi-host': "quotes15.p.rapidapi.com"
+        }
+        
+        response = await client.get(QUOTES_API, headers=headers)
+        
+        if response.status_code == 200:
+            data = response.json()
+            quote_content = data.get("content", "Patience is a virtue.")
+            author = data.get("originator", {}).get("name", "Unknown")
+            return f'"{quote_content}" - {author}'
+        else:
+            return '"Patience is a virtue." - Unknown'
+            
+    except Exception as e:
+        logger.error(f"Error fetching quote: {str(e)}")
+        return '"Good things come to those who wait." - Unknown'
 
 # Semaphore for concurrent request limiting
 API_SEMAPHORE = asyncio.Semaphore(50)  # Max 50 concurrent API requests
@@ -377,6 +439,19 @@ async def mobile_search(update: Update, mobile: str):
     if mobile == "⬅️ Back to Menu":
         return
     
+    # Check API cooldown
+    user_id = update.effective_user.id
+    is_allowed, remaining = await check_api_cooldown(user_id)
+    if not is_allowed:
+        quote = await get_random_quote()
+        await update.message.reply_text(
+            f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
+            f"📖 Meanwhile, here's something to read:\n"
+            f"_{quote}_",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
     # Check if mobile API is under maintenance
     if MOBILE_API_MAINTENANCE:
         await update.message.reply_text(
@@ -403,10 +478,12 @@ async def mobile_search(update: Update, mobile: str):
             await update.message.reply_text(f"Error: {data['error']}")
             return
         
+        # Set API cooldown after successful response
+        await set_api_cooldown(user_id)
+        
         if "data" in data and data["data"]:
-            # First show how many results were found
             count = len(data["data"])
-            await update.message.reply_text(f"Found {count} result(s) for mobile: {mobile}")
+            result = f"📱 *Mobile Search Results ({count} found)*\n\n"
             
             # Process each person in the data array
             for i, person in enumerate(data["data"]):
@@ -415,26 +492,35 @@ async def mobile_search(update: Update, mobile: str):
                 alt_mobile = person.get('alt', 'N/A')
                 person_id = person.get('id', 'N/A')
                 
-                # Prepare basic result
-                result = (
-                    f"Person Information ({i+1}/{count}):\n\n"
+                # Prepare person result
+                person_result = (
+                    f"*Person {i+1}:*\n"
                     f"👤 *Name*: {person.get('name', 'N/A')}\n"
                     f"👨‍👦 *Father's Name*: {person.get('fname', 'N/A')}\n"
                     f"🏠 *Address*: `{person.get('address', 'N/A').replace('!', ', ')}`\n"
-                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n\n"
+                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n"
+                    f"📱 *Mobile*: `{mobile_num}`\n"
+                    f"📞 *Alt Mobile*: `{alt_mobile}`\n"
+                    f"🆔 *ID*: `{person_id}`"
                 )
-                
-                # Add copyable information in horizontal format
-                result += f"📱 *Mobile*: `{mobile_num}`\n"
-                result += f"📞 *Alt Mobile*: `{alt_mobile}`\n"
-                result += f"🆔 *ID*: `{person_id}`"
                 
                 # Add email if available
                 if 'email' in person and person.get('email'):
                     email = person.get('email')
-                    result += f"\n📧 *Email*: `{email}`"
+                    person_result += f"\n📧 *Email*: `{email}`"
                 
-                await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                person_result += "\n\n"
+                
+                # Check if adding this person would exceed the limit
+                if len(result + person_result) > 4000:  # Leave some buffer
+                    # Send current result and start a new one
+                    await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                    result = f"📱 *Mobile Search Results (continued)*\n\n" + person_result
+                else:
+                    result += person_result
+            
+            # Send final result
+            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
         else:
             # Try direct API call as fallback
             try:
@@ -446,7 +532,7 @@ async def mobile_search(update: Update, mobile: str):
                         data = response.json()
                         if "data" in data and data["data"]:
                             count = len(data["data"])
-                            await update.message.reply_text(f"Found {count} result(s) for mobile: {mobile}")
+                            result = f"📱 *Mobile Search Results ({count} found)*\n\n"
                             
                             # Process data as before
                             for i, person in enumerate(data["data"]):
@@ -454,23 +540,31 @@ async def mobile_search(update: Update, mobile: str):
                                 alt_mobile = person.get('alt', 'N/A')
                                 person_id = person.get('id', 'N/A')
                                 
-                                result = (
-                                    f"Person Information ({i+1}/{count}):\n\n"
+                                person_result = (
+                                    f"*Person {i+1}:*\n"
                                     f"👤 *Name*: {person.get('name', 'N/A')}\n"
                                     f"👨‍👦 *Father's Name*: {person.get('fname', 'N/A')}\n"
                                     f"🏠 *Address*: `{person.get('address', 'N/A').replace('!', ', ')}`\n"
-                                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n\n"
+                                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n"
+                                    f"📱 *Mobile*: `{mobile_num}`\n"
+                                    f"📞 *Alt Mobile*: `{alt_mobile}`\n"
+                                    f"🆔 *ID*: `{person_id}`"
                                 )
-                                
-                                result += f"📱 *Mobile*: `{mobile_num}`\n"
-                                result += f"📞 *Alt Mobile*: `{alt_mobile}`\n"
-                                result += f"🆔 *ID*: `{person_id}`"
                                 
                                 if 'email' in person and person.get('email'):
                                     email = person.get('email')
-                                    result += f"\n📧 *Email*: `{email}`"
+                                    person_result += f"\n📧 *Email*: `{email}`"
                                 
-                                await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                                person_result += "\n\n"
+                                
+                                # Check if adding this person would exceed the limit
+                                if len(result + person_result) > 4000:
+                                    await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                                    result = f"📱 *Mobile Search Results (continued)*\n\n" + person_result
+                                else:
+                                    result += person_result
+                            
+                            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                             return
                     except Exception as e:
                         logger.error(f"Error parsing fallback response: {str(e)}")
@@ -485,6 +579,19 @@ async def mobile_search(update: Update, mobile: str):
 async def aadhar_search(update: Update, aadhar: str):
     # If the aadhar is "Back to Menu", ignore it
     if aadhar == "⬅️ Back to Menu":
+        return
+    
+    # Check API cooldown
+    user_id = update.effective_user.id
+    is_allowed, remaining = await check_api_cooldown(user_id)
+    if not is_allowed:
+        quote = await get_random_quote()
+        await update.message.reply_text(
+            f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
+            f"📖 Meanwhile, here's something to read:\n"
+            f"_{quote}_",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
     
     # Check if aadhar API is under maintenance
@@ -512,11 +619,13 @@ async def aadhar_search(update: Update, aadhar: str):
         if "error" in data:
             await update.message.reply_text(f"Error: {data['error']}")
             return
+        
+        # Set API cooldown after successful response
+        await set_api_cooldown(user_id)
             
         if "data" in data and data["data"]:
-            # First show how many results were found
             count = len(data["data"])
-            await update.message.reply_text(f"Found {count} result(s) for Aadhar: {aadhar}")
+            result = f"🔎 *Aadhaar Search Results ({count} found)*\n\n"
             
             # Process each person in the data array
             for i, person in enumerate(data["data"]):
@@ -525,26 +634,35 @@ async def aadhar_search(update: Update, aadhar: str):
                 alt_mobile = person.get('alt', 'N/A')
                 person_id = person.get('id', 'N/A')
                 
-                # Prepare basic result
-                result = (
-                    f"Person Information ({i+1}/{count}):\n\n"
+                # Prepare person result
+                person_result = (
+                    f"*Person {i+1}:*\n"
                     f"👤 *Name*: {person.get('name', 'N/A')}\n"
                     f"👨‍👦 *Father's Name*: {person.get('fname', 'N/A')}\n"
                     f"🏠 *Address*: `{person.get('address', 'N/A').replace('!', ', ')}`\n"
-                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n\n"
+                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n"
+                    f"📱 *Mobile*: `{mobile_num}`\n"
+                    f"📞 *Alt Mobile*: `{alt_mobile}`\n"
+                    f"🆔 *ID*: `{person_id}`"
                 )
-                
-                # Add copyable information in horizontal format
-                result += f"📱 *Mobile*: `{mobile_num}`\n"
-                result += f"📞 *Alt Mobile*: `{alt_mobile}`\n"
-                result += f"🆔 *ID*: `{person_id}`"
                 
                 # Add email if available
                 if 'email' in person and person.get('email'):
                     email = person.get('email')
-                    result += f"\n📧 *Email*: `{email}`"
+                    person_result += f"\n📧 *Email*: `{email}`"
                 
-                await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                person_result += "\n\n"
+                
+                # Check if adding this person would exceed the limit
+                if len(result + person_result) > 4000:  # Leave some buffer
+                    # Send current result and start a new one
+                    await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                    result = f"🔎 *Aadhaar Search Results (continued)*\n\n" + person_result
+                else:
+                    result += person_result
+            
+            # Send final result
+            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
         else:
             # Try direct API call as fallback
             try:
@@ -556,7 +674,7 @@ async def aadhar_search(update: Update, aadhar: str):
                         data = response.json()
                         if "data" in data and data["data"]:
                             count = len(data["data"])
-                            await update.message.reply_text(f"Found {count} result(s) for Aadhar: {aadhar}")
+                            result = f"🔎 *Aadhaar Search Results ({count} found)*\n\n"
                             
                             # Process data as before
                             for i, person in enumerate(data["data"]):
@@ -564,23 +682,31 @@ async def aadhar_search(update: Update, aadhar: str):
                                 alt_mobile = person.get('alt', 'N/A')
                                 person_id = person.get('id', 'N/A')
                                 
-                                result = (
-                                    f"Person Information ({i+1}/{count}):\n\n"
+                                person_result = (
+                                    f"*Person {i+1}:*\n"
                                     f"👤 *Name*: {person.get('name', 'N/A')}\n"
                                     f"👨‍👦 *Father's Name*: {person.get('fname', 'N/A')}\n"
                                     f"🏠 *Address*: `{person.get('address', 'N/A').replace('!', ', ')}`\n"
-                                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n\n"
+                                    f"🌎 *Circle*: {person.get('circle', 'N/A')}\n"
+                                    f"📱 *Mobile*: `{mobile_num}`\n"
+                                    f"📞 *Alt Mobile*: `{alt_mobile}`\n"
+                                    f"🆔 *ID*: `{person_id}`"
                                 )
-                                
-                                result += f"📱 *Mobile*: `{mobile_num}`\n"
-                                result += f"📞 *Alt Mobile*: `{alt_mobile}`\n"
-                                result += f"🆔 *ID*: `{person_id}`"
                                 
                                 if 'email' in person and person.get('email'):
                                     email = person.get('email')
-                                    result += f"\n📧 *Email*: `{email}`"
+                                    person_result += f"\n📧 *Email*: `{email}`"
                                 
-                                await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                                person_result += "\n\n"
+                                
+                                # Check if adding this person would exceed the limit
+                                if len(result + person_result) > 4000:
+                                    await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                                    result = f"🔎 *Aadhaar Search Results (continued)*\n\n" + person_result
+                                else:
+                                    result += person_result
+                            
+                            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                             return
                     except Exception as e:
                         logger.error(f"Error parsing fallback response: {str(e)}")
@@ -603,6 +729,19 @@ async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # If the aadhar number is "Back to Menu", ignore it
     if aadhar_number == "⬅️ Back to Menu":
+        return
+    
+    # Check API cooldown
+    user_id = update.effective_user.id
+    is_allowed, remaining = await check_api_cooldown(user_id)
+    if not is_allowed:
+        quote = await get_random_quote()
+        await update.message.reply_text(
+            f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
+            f"📖 Meanwhile, here's something to read:\n"
+            f"_{quote}_",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
     
     # Check if age API is under maintenance
@@ -634,6 +773,9 @@ async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await searching_message.delete()
         
         if response.status_code == 200:
+            # Set API cooldown after successful response
+            await set_api_cooldown(user_id)
+            
             try:
                 data = response.json()
                 
@@ -706,6 +848,19 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query == "⬅️ Back to Menu":
         return
     
+    # Check API cooldown
+    user_id = update.effective_user.id
+    is_allowed, remaining = await check_api_cooldown(user_id)
+    if not is_allowed:
+        quote = await get_random_quote()
+        await update.message.reply_text(
+            f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
+            f"📖 Meanwhile, here's something to read:\n"
+            f"_{quote}_",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
     # Check if social API is under maintenance
     if SOCIAL_API_MAINTENANCE:
         await update.message.reply_text(
@@ -736,6 +891,8 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
         
         # Check if the response is successful
         if response.status_code == 200 and data.get("status") == "OK" and "data" in data:
+            # Set API cooldown after successful response
+            await set_api_cooldown(user_id)
             result_data = data["data"]
             
             # Create a formatted message with all social media links using HTML formatting
@@ -749,42 +906,27 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if links:  # If there are links for this network
                     profiles_found = True
                     # Add network name with proper capitalization
-                    result_message += f"<b>{network.capitalize()}</b>:\n"
+                    network_section = f"<b>{network.capitalize()}</b>:\n"
                     
                     # Add all links for each network as normal text (clickable)
                     for link in links:
-                        result_message += f"• {link}\n"
+                        network_section += f"• {link}\n"
                     
-                    result_message += "\n"
+                    network_section += "\n"
+                    
+                    # Check if adding this network would exceed the limit
+                    if len(result_message + network_section) > 4000:
+                        # Send current result and start a new one
+                        await update.message.reply_text(result_message, parse_mode=ParseMode.HTML)
+                        result_message = f"🔍 <b>Social Media Profiles for '{query}' (continued)</b>\n\n" + network_section
+                    else:
+                        result_message += network_section
             
-            # Split the message if it's too long (Telegram has a 4096 character limit)
-            if len(result_message) > 4000:
-                # Send results platform by platform
-                await update.message.reply_text(f"🔍 <b>Social Media Profiles for '{query}'</b>\n\nFound profiles on multiple platforms. Sending results separately for each platform.", parse_mode=ParseMode.HTML)
-                
-                for network, links in result_data.items():
-                    if links:
-                        platform_message = f"<b>{network.capitalize()}</b> profiles for '{query}':\n\n"
-                        for link in links:
-                            platform_message += f"• {link}\n"
-                        
-                        # Send each platform's results as a separate message
-                        if len(platform_message) > 4000:
-                            # If even a single platform has too many links, split it further
-                            chunks = [links[i:i+30] for i in range(0, len(links), 30)]
-                            for i, chunk in enumerate(chunks):
-                                chunk_msg = f"<b>{network.capitalize()}</b> profiles for '{query}' (part {i+1}/{len(chunks)}):\n\n"
-                                for link in chunk:
-                                    chunk_msg += f"• {link}\n"
-                                await update.message.reply_text(chunk_msg, parse_mode=ParseMode.HTML)
-                        else:
-                            await update.message.reply_text(platform_message, parse_mode=ParseMode.HTML)
+            # Send final result
+            if profiles_found:
+                await update.message.reply_text(result_message, parse_mode=ParseMode.HTML)
             else:
-                # If the message is not too long, send it as one message
-                if profiles_found:
-                    await update.message.reply_text(result_message, parse_mode=ParseMode.HTML)
-                else:
-                    await update.message.reply_text(f"No social media profiles found for '{query}'.")
+                await update.message.reply_text(f"No social media profiles found for '{query}'.")
         else:
             # If there's an error or no data
             error_msg = data.get("message", "Unknown error occurred")
@@ -798,6 +940,19 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def breach_check(update: Update, email: str):
     # If the email is "Back to Menu", ignore it
     if email == "⬅️ Back to Menu":
+        return
+    
+    # Check API cooldown
+    user_id = update.effective_user.id
+    is_allowed, remaining = await check_api_cooldown(user_id)
+    if not is_allowed:
+        quote = await get_random_quote()
+        await update.message.reply_text(
+            f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
+            f"📖 Meanwhile, here's something to read:\n"
+            f"_{quote}_",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
     
     # Check if breach API is under maintenance
@@ -824,6 +979,9 @@ async def breach_check(update: Update, email: str):
         await searching_message.delete()
         
         if response.status_code == 200:
+            # Set API cooldown after successful response
+            await set_api_cooldown(user_id)
+            
             try:
                 breach_data = response.json()
                 
@@ -843,26 +1001,26 @@ async def breach_check(update: Update, email: str):
                         description = breach.get('Description', 'No description available')
                         data_classes = breach.get('DataClasses', [])
                         
-                        result += f"🔴 *{breach_name}*\n"
-                        result += f"📅 Date: `{breach_date}`\n"
-                        result += f"📝 Info: {description}\n"
+                        breach_info = f"🔴 *{breach_name}*\n"
+                        breach_info += f"📅 Date: `{breach_date}`\n"
+                        breach_info += f"📝 Info: {description}\n"
                         
                         if data_classes:
                             data_types = ", ".join(data_classes)
-                            result += f"💾 Data: `{data_types}`\n"
+                            breach_info += f"💾 Data: `{data_types}`\n"
                         
-                        result += "\n"
+                        breach_info += "\n"
                         
-                        # Split message if it gets too long (Telegram limit is 4096 chars)
-                        if len(result) > 3500:
+                        # Check if adding this breach would exceed the limit
+                        if len(result + breach_info) > 4000:  # Leave some buffer
+                            # Send current result and start a new one
                             await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
-                            result = f"*Continued breaches for {email}:*\n\n"
+                            result = f"*Continued breaches for {email}:*\n\n" + breach_info
+                        else:
+                            result += breach_info
                     
-                    # Send final message if there's remaining content
-                    if result.strip() and not result.startswith("*Continued breaches"):
-                        await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
-                    elif result.startswith("*Continued breaches") and len(result) > 50:
-                        await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                    # Send final message
+                    await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                         
                 else:
                     # No breaches found
@@ -882,6 +1040,19 @@ async def breach_check(update: Update, email: str):
 async def vehicle_search(update: Update, vehicle_number: str):
     # If the vehicle number is "Back to Menu", ignore it
     if vehicle_number == "⬅️ Back to Menu":
+        return
+    
+    # Check API cooldown
+    user_id = update.effective_user.id
+    is_allowed, remaining = await check_api_cooldown(user_id)
+    if not is_allowed:
+        quote = await get_random_quote()
+        await update.message.reply_text(
+            f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
+            f"📖 Meanwhile, here's something to read:\n"
+            f"_{quote}_",
+            parse_mode=ParseMode.MARKDOWN
+        )
         return
     
     # Check if vehicle API is under maintenance
@@ -917,6 +1088,9 @@ async def vehicle_search(update: Update, vehicle_number: str):
         await searching_message.delete()
         
         if response.status_code == 200:
+            # Set API cooldown after successful response
+            await set_api_cooldown(user_id)
+            
             try:
                 vehicle_data = response.json()
                 
@@ -969,23 +1143,59 @@ async def vehicle_search(update: Update, vehicle_number: str):
                     result += f"• RC Expiry: `{rc_expiry}`\n"
                     result += f"• RTO: `{rto_name}`\n\n"
                     
-                    await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                    # Address Information
+                    result += f"📍 *Address Information:*\n"
+                    result += f"• Permanent: `{permanent_address}`\n"
+                    result += f"• Present: `{present_address}`\n\n"
                     
-                    # Send second message with additional details
-                    result2 = f"📍 *Address Information:*\n"
-                    result2 += f"• Permanent: `{permanent_address}`\n"
-                    result2 += f"• Present: `{present_address}`\n\n"
+                    # Technical Details
+                    result += f"🔢 *Technical Details:*\n"
+                    result += f"• Chassis No: `{chasi_no}`\n"
+                    result += f"• Engine No: `{engine_no}`\n\n"
                     
-                    result2 += f"🔢 *Technical Details:*\n"
-                    result2 += f"• Chassis No: `{chasi_no}`\n"
-                    result2 += f"• Engine No: `{engine_no}`\n\n"
+                    # Insurance & PUC
+                    result += f"🛡️ *Insurance & PUC:*\n"
+                    result += f"• Insurance: `{insurance_company}`\n"
+                    result += f"• Insurance Valid Till: `{insurance_upto}`\n"
+                    result += f"• PUC Valid Till: `{pucc_upto}`"
                     
-                    result2 += f"🛡️ *Insurance & PUC:*\n"
-                    result2 += f"• Insurance: `{insurance_company}`\n"
-                    result2 += f"• Insurance Valid Till: `{insurance_upto}`\n"
-                    result2 += f"• PUC Valid Till: `{pucc_upto}`"
-                    
-                    await update.message.reply_text(result2, parse_mode=ParseMode.MARKDOWN)
+                    # Check if message is too long and split if necessary
+                    if len(result) > 4000:
+                        # Split into two parts
+                        part1 = f"🚗 *Vehicle Information Found*\n\n"
+                        part1 += f"👤 *Owner Information:*\n"
+                        part1 += f"• Name: `{owner_name}`\n"
+                        part1 += f"• Father's Name: `{father_name}`\n"
+                        part1 += f"• Mobile: `{mobile_number}`\n\n"
+                        part1 += f"🚙 *Vehicle Details:*\n"
+                        part1 += f"• Number: `{reg_number}`\n"
+                        part1 += f"• Status: `{vehicle_status}`\n"
+                        part1 += f"• Class: `{vehicle_class}`\n"
+                        part1 += f"• Model: `{vehicle_model}`\n"
+                        part1 += f"• Manufacturer: `{maker_desc}`\n"
+                        part1 += f"• Fuel: `{fuel}`\n"
+                        part1 += f"• Color: `{color}`\n\n"
+                        part1 += f"📅 *Registration & Validity:*\n"
+                        part1 += f"• Reg Date: `{reg_date}`\n"
+                        part1 += f"• RC Expiry: `{rc_expiry}`\n"
+                        part1 += f"• RTO: `{rto_name}`"
+                        
+                        part2 = f"🚗 *Vehicle Information (continued)*\n\n"
+                        part2 += f"📍 *Address Information:*\n"
+                        part2 += f"• Permanent: `{permanent_address}`\n"
+                        part2 += f"• Present: `{present_address}`\n\n"
+                        part2 += f"🔢 *Technical Details:*\n"
+                        part2 += f"• Chassis No: `{chasi_no}`\n"
+                        part2 += f"• Engine No: `{engine_no}`\n\n"
+                        part2 += f"🛡️ *Insurance & PUC:*\n"
+                        part2 += f"• Insurance: `{insurance_company}`\n"
+                        part2 += f"• Insurance Valid Till: `{insurance_upto}`\n"
+                        part2 += f"• PUC Valid Till: `{pucc_upto}`"
+                        
+                        await update.message.reply_text(part1, parse_mode=ParseMode.MARKDOWN)
+                        await update.message.reply_text(part2, parse_mode=ParseMode.MARKDOWN)
+                    else:
+                        await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                     
                 else:
                     # No vehicle data found
@@ -1067,7 +1277,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # Check rate limiting first
     if not await check_rate_limit(user_id):
         await update.message.reply_text(
-            "⏰ Rate limit exceeded. Please wait a moment before making another request."
+            "⏰ Rate limit exceeded. Chill out.. a moment before making another request."
         )
         return ConversationHandler.END
     
