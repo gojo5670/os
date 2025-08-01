@@ -16,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
+TOKEN = ("8028221566:AAEQTYPRHSQMy_3uYpDJ8kuBEowUn5WS1GI")
 
 # Admin and channel verification
 ADMIN_IDS = [1074750898]
@@ -54,7 +54,7 @@ AADHAR_API_MAINTENANCE = False
 AGE_API_MAINTENANCE = False
 VEHICLE_API_MAINTENANCE = True
 SOCIAL_API_MAINTENANCE = True
-BREACH_API_MAINTENANCE = False
+BREACH_API_MAINTENANCE = True
 
 # Conversation states
 
@@ -71,7 +71,7 @@ user_data_dict = {}
 # Global HTTP client with connection pooling for high performance
 HTTP_CLIENT = None
 
-async def get_http_client():
+async def get_http_client() -> httpx.AsyncClient:
     """Get or create HTTP client with optimized settings for high load"""
     global HTTP_CLIENT
     if HTTP_CLIENT is None or HTTP_CLIENT.is_closed:
@@ -99,7 +99,7 @@ async def get_http_client():
         )
     return HTTP_CLIENT
 
-async def cleanup_http_client():
+async def cleanup_http_client() -> None:
     """Cleanup HTTP client on shutdown"""
     global HTTP_CLIENT
     if HTTP_CLIENT and not HTTP_CLIENT.is_closed:
@@ -126,15 +126,21 @@ from collections import defaultdict, deque
 USER_REQUEST_TIMES = defaultdict(deque)
 USER_LAST_API_CALL = defaultdict(float)  # Track last API call time per user
 
-MAX_REQUESTS_PER_MINUTE = 5  # Max 20 requests per user per minute
+# Rate limiting constants
+MAX_REQUESTS_PER_MINUTE = 5  # Max 5 requests per user per minute
 API_COOLDOWN_SECONDS = 60  # 60 second cooldown after API response
-CLEANUP_INTERVAL = 300  # Clean up old data every 5 minutes
+CLEANUP_INTERVAL_SECONDS = 300  # Clean up old data every 5 minutes
+MESSAGE_LENGTH_LIMIT = 4000  # Telegram message length limit with buffer
+
+# Common strings
+BACK_TO_MENU = "⬅️ Back to Menu"
+BOT_NAME = "Mr.Detective Bot"
 
 async def periodic_cleanup():
     """Periodically clean up old user data to prevent memory leaks"""
     while True:
         try:
-            await asyncio.sleep(CLEANUP_INTERVAL)
+            await asyncio.sleep(CLEANUP_INTERVAL_SECONDS)
             current_time = time.time()
             
             # Clean up old rate limiting data
@@ -167,7 +173,7 @@ async def periodic_cleanup():
                 if isinstance(data, dict) and 'timestamp' in data:
                     if current_time - data['timestamp'] > 3600:
                         expired_users.append(user_id)
-                elif current_time % 3600 < CLEANUP_INTERVAL:  # Clean periodically
+                elif current_time % 3600 < CLEANUP_INTERVAL_SECONDS:  # Clean periodically
                     expired_users.append(user_id)
             
             for user_id in expired_users:
@@ -176,8 +182,10 @@ async def periodic_cleanup():
             if users_to_remove or expired_users:
                 logger.info(f"🧹 Cleaned up data for {len(users_to_remove + expired_users)} users")
                 
-        except Exception as e:
+        except (KeyError, ValueError, OSError) as e:
             logger.error(f"Error in periodic cleanup: {str(e)}")
+        except Exception as e:
+            logger.error(f"Unexpected error in periodic cleanup: {str(e)}")
 
 async def check_rate_limit(user_id: int) -> bool:
     """Check if user is within rate limits"""
@@ -217,11 +225,11 @@ async def check_api_cooldown(user_id: int) -> tuple[bool, int]:
 
 
 
-async def set_api_cooldown(user_id: int):
+async def set_api_cooldown(user_id: int) -> None:
     """Set API cooldown for user after successful API call"""
     USER_LAST_API_CALL[user_id] = time.time()
 
-async def get_random_quote():
+async def get_random_quote() -> str:
     """Fetch a random quote for cooldown messages"""
     try:
         client = await get_http_client()
@@ -240,20 +248,23 @@ async def get_random_quote():
         else:
             return '"Patience is a virtue." - Unknown'
             
-    except Exception as e:
+    except (httpx.RequestError, httpx.HTTPStatusError, KeyError, ValueError) as e:
         logger.error(f"Error fetching quote: {str(e)}")
         return '"Good things come to those who wait." - Unknown'
+    except Exception as e:
+        logger.error(f"Unexpected error fetching quote: {str(e)}")
+        return '"Patience is a virtue." - Unknown'
 
 # Semaphore for concurrent request limiting
 API_SEMAPHORE = asyncio.Semaphore(50)  # Max 50 concurrent API requests
 
-async def make_api_request_with_limit(url: str):
+async def make_api_request_with_limit(url: str) -> dict:
     """Make API request with concurrency and rate limiting"""
     async with API_SEMAPHORE:
         return await get_api_data(url)
 
 # High-performance async API data fetcher
-async def get_api_data(url, max_retries=3, delay=0.5):
+async def get_api_data(url: str, max_retries: int = 3, delay: float = 0.5) -> dict:
     """Optimized async API data fetcher with connection pooling"""
     client = await get_http_client()
     retries = 0
@@ -283,10 +294,13 @@ async def get_api_data(url, max_retries=3, delay=0.5):
                         else:
                             # If no data field but valid JSON, wrap in data object
                             return {"data": [data] if not isinstance(data, list) else data}
-                except Exception as e:
+                except (ValueError, KeyError, TypeError) as e:
                     # If response is not valid JSON, log error
                     logger.error(f"Invalid JSON response: {text[:200]}, Error: {str(e)}")
                     return {"error": "Invalid JSON response from API"}
+                except Exception as e:
+                    logger.error(f"Unexpected JSON parsing error: {str(e)}")
+                    return {"error": "Failed to parse API response"}
             
             # If API returned error, try again
             if retries < max_retries - 1:  # Don't log on last retry
@@ -297,13 +311,17 @@ async def get_api_data(url, max_retries=3, delay=0.5):
             delay = min(delay * 1.5, 2.0)  # Cap at 2 seconds
             retries += 1
             
-        except Exception as e:
+        except (httpx.RequestError, httpx.TimeoutException, httpx.ConnectError) as e:
             last_error = str(e)
             if retries < max_retries - 1:  # Don't log on last retry
                 logger.warning(f"API connection error, retrying {retries+1}/{max_retries}...")
             await asyncio.sleep(delay)
             delay = min(delay * 1.5, 2.0)
             retries += 1
+        except Exception as e:
+            last_error = str(e)
+            logger.error(f"Unexpected API error: {str(e)}")
+            break
     
     # If all retries failed, return error
     logger.error(f"API failed after {max_retries} attempts: {last_error}")
@@ -436,7 +454,7 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
 # Search functions
 async def mobile_search(update: Update, mobile: str):
     # If the mobile is "Back to Menu", ignore it
-    if mobile == "⬅️ Back to Menu":
+    if mobile == BACK_TO_MENU:
         return
     
     # Check API cooldown
@@ -512,7 +530,7 @@ async def mobile_search(update: Update, mobile: str):
                 person_result += "\n\n"
                 
                 # Check if adding this person would exceed the limit
-                if len(result + person_result) > 4000:  # Leave some buffer
+                if len(result + person_result) > MESSAGE_LENGTH_LIMIT:  # Leave some buffer
                     # Send current result and start a new one
                     await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                     result = f"📱 *Mobile Search Results (continued)*\n\n" + person_result
@@ -558,7 +576,7 @@ async def mobile_search(update: Update, mobile: str):
                                 person_result += "\n\n"
                                 
                                 # Check if adding this person would exceed the limit
-                                if len(result + person_result) > 4000:
+                                if len(result + person_result) > MESSAGE_LENGTH_LIMIT:
                                     await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                                     result = f"📱 *Mobile Search Results (continued)*\n\n" + person_result
                                 else:
@@ -654,7 +672,7 @@ async def aadhar_search(update: Update, aadhar: str):
                 person_result += "\n\n"
                 
                 # Check if adding this person would exceed the limit
-                if len(result + person_result) > 4000:  # Leave some buffer
+                if len(result + person_result) > MESSAGE_LENGTH_LIMIT:  # Leave some buffer
                     # Send current result and start a new one
                     await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                     result = f"🔎 *Aadhaar Search Results (continued)*\n\n" + person_result
@@ -700,7 +718,7 @@ async def aadhar_search(update: Update, aadhar: str):
                                 person_result += "\n\n"
                                 
                                 # Check if adding this person would exceed the limit
-                                if len(result + person_result) > 4000:
+                                if len(result + person_result) > MESSAGE_LENGTH_LIMIT:
                                     await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                                     result = f"🔎 *Aadhaar Search Results (continued)*\n\n" + person_result
                                 else:
@@ -915,7 +933,7 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     network_section += "\n"
                     
                     # Check if adding this network would exceed the limit
-                    if len(result_message + network_section) > 4000:
+                    if len(result_message + network_section) > MESSAGE_LENGTH_LIMIT:
                         # Send current result and start a new one
                         await update.message.reply_text(result_message, parse_mode=ParseMode.HTML)
                         result_message = f"🔍 <b>Social Media Profiles for '{query}' (continued)</b>\n\n" + network_section
@@ -1012,7 +1030,7 @@ async def breach_check(update: Update, email: str):
                         breach_info += "\n"
                         
                         # Check if adding this breach would exceed the limit
-                        if len(result + breach_info) > 4000:  # Leave some buffer
+                        if len(result + breach_info) > MESSAGE_LENGTH_LIMIT:  # Leave some buffer
                             # Send current result and start a new one
                             await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                             result = f"*Continued breaches for {email}:*\n\n" + breach_info
@@ -1160,7 +1178,7 @@ async def vehicle_search(update: Update, vehicle_number: str):
                     result += f"• PUC Valid Till: `{pucc_upto}`"
                     
                     # Check if message is too long and split if necessary
-                    if len(result) > 4000:
+                    if len(result) > MESSAGE_LENGTH_LIMIT:
                         # Split into two parts
                         part1 = f"🚗 *Vehicle Information Found*\n\n"
                         part1 += f"👤 *Owner Information:*\n"
@@ -1652,7 +1670,7 @@ def main():
     print(f"   • Max requests per user/minute: {MAX_REQUESTS_PER_MINUTE}")
     print(f"   • Max concurrent API requests: 50")
     print(f"   • Concurrent updates: Enabled")
-    print(f"   • Memory cleanup interval: {CLEANUP_INTERVAL}s")
+    print(f"   • Memory cleanup interval: {CLEANUP_INTERVAL_SECONDS}s")
     
     # Create application 
     app = (ApplicationBuilder()
