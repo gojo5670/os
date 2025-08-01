@@ -307,7 +307,7 @@ async def get_api_data(url, max_retries=3, delay=0.5):
     
     # If all retries failed, return error
     logger.error(f"API failed after {max_retries} attempts: {last_error}")
-    return {"error": f"Service temporarily unavailable. Please try again."}
+    return {"error": f"Record not found"}
 
 # Channel membership verification
 async def check_channel_membership(context: ContextTypes.DEFAULT_TYPE, user_id: int):
