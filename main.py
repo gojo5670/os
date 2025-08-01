@@ -16,7 +16,7 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 # Bot configuration
-TOKEN = ("08114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
+TOKEN = ("8114314056:AAE3GWzbQjF-86-L2vrFA-Wrp-SAC3aLYSc")
 
 # Admin and channel verification
 ADMIN_IDS = [1074750898]
@@ -49,9 +49,9 @@ QUOTES_API = "https://quotes15.p.rapidapi.com/quotes/random/?language_code=en"
 QUOTES_API_KEY = "422ce45dabmshae4fa40ed7c05b2p11fbbdjsn35ac3f8fe43d"
 
 # API Maintenance Flags - Set to True to enable maintenance mode
-MOBILE_API_MAINTENANCE = False
-AADHAR_API_MAINTENANCE = False
-AGE_API_MAINTENANCE = False
+MOBILE_API_MAINTENANCE = True
+AADHAR_API_MAINTENANCE = True
+AGE_API_MAINTENANCE = True
 VEHICLE_API_MAINTENANCE = True
 SOCIAL_API_MAINTENANCE = True
 BREACH_API_MAINTENANCE = True
