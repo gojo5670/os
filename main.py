@@ -4,6 +4,9 @@ import httpx
 import asyncio
 import signal
 import sys
+import json
+import time
+from datetime import datetime, timedelta
 from telegram.ext import ApplicationBuilder, MessageHandler, filters, ContextTypes, CommandHandler, ConversationHandler, CallbackQueryHandler
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardMarkup, InlineKeyboardButton, ReplyKeyboardRemove
 from telegram.constants import ParseMode
@@ -49,12 +52,12 @@ QUOTES_API = "https://quotes15.p.rapidapi.com/quotes/random/?language_code=en"
 QUOTES_API_KEY = "422ce45dabmshae4fa40ed7c05b2p11fbbdjsn35ac3f8fe43d"
 
 # API Maintenance Flags - Set to True to enable maintenance mode
-MOBILE_API_MAINTENANCE = True
-AADHAR_API_MAINTENANCE = True
-AGE_API_MAINTENANCE = True
-VEHICLE_API_MAINTENANCE = True
+MOBILE_API_MAINTENANCE = False
+AADHAR_API_MAINTENANCE = False
+AGE_API_MAINTENANCE = False
+VEHICLE_API_MAINTENANCE = False
 SOCIAL_API_MAINTENANCE = True
-BREACH_API_MAINTENANCE = True
+BREACH_API_MAINTENANCE = False
 
 # Conversation states
 
@@ -67,6 +70,113 @@ ENTER_VEHICLE = 60
 
 # User data dictionary to store temporary data
 user_data_dict = {}
+
+# Credits database (in production, use a proper database)
+CREDITS_DB_FILE = "credits_db.json"
+
+# Credit plans
+CREDIT_PLANS = [
+    {"price": "₹12", "credits": 1, "duration": None, "description": "1 Credit"},
+    {"price": "₹100", "credits": 10, "duration": None, "description": "10 Credits"},
+    {"price": "₹200", "credits": "unlimited", "duration": 1, "description": "Unlimited for 1 Day"},
+    {"price": "₹500", "credits": "unlimited", "duration": 7, "description": "Unlimited for 7 Days"},
+    {"price": "₹1000", "credits": "unlimited", "duration": 30, "description": "Unlimited for 1 Month"},
+    {"price": "₹2000", "credits": "unlimited", "duration": 999999, "description": "Lifetime Unlimited"}
+]
+
+def load_credits_db():
+    """Load credits database from file"""
+    try:
+        if os.path.exists(CREDITS_DB_FILE):
+            with open(CREDITS_DB_FILE, 'r') as f:
+                return json.load(f)
+    except Exception as e:
+        logger.error(f"Error loading credits DB: {e}")
+    return {}
+
+def save_credits_db(db):
+    """Save credits database to file"""
+    try:
+        with open(CREDITS_DB_FILE, 'w') as f:
+            json.dump(db, f, indent=2)
+    except Exception as e:
+        logger.error(f"Error saving credits DB: {e}")
+
+def get_user_credits(user_id):
+    """Get user's current credits and unlimited access status"""
+    db = load_credits_db()
+    user_data = db.get(str(user_id), {})
+    
+    credits = user_data.get('credits', 0)
+    unlimited_until = user_data.get('unlimited_until')
+    
+    # Check if unlimited access is still valid
+    if unlimited_until:
+        unlimited_date = datetime.fromisoformat(unlimited_until)
+        if datetime.now() > unlimited_date:
+            # Unlimited access expired, remove it
+            user_data.pop('unlimited_until', None)
+            db[str(user_id)] = user_data
+            save_credits_db(db)
+            return credits, False
+        return credits, True
+    
+    return credits, False
+
+def save_user_info(user_id, username=None, first_name=None, last_name=None):
+    """Save user information to database"""
+    db = load_credits_db()
+    user_data = db.get(str(user_id), {})
+    
+    # Update user info if provided
+    if username:
+        user_data['username'] = username
+    if first_name:
+        user_data['first_name'] = first_name
+    if last_name:
+        user_data['last_name'] = last_name
+    
+    # Update last seen timestamp
+    user_data['last_seen'] = datetime.now().isoformat()
+    
+    # Initialize credits if new user - give 2 free credits
+    if 'credits' not in user_data:
+        user_data['credits'] = 2
+    
+    db[str(user_id)] = user_data
+    save_credits_db(db)
+
+def update_user_credits(user_id, credits=None, days=None):
+    """Update user's credits or unlimited access"""
+    db = load_credits_db()
+    user_data = db.get(str(user_id), {})
+    
+    if days is not None:
+        # Set unlimited access
+        if days == 999999:  # Lifetime
+            unlimited_until = (datetime.now() + timedelta(days=36500)).isoformat()  # 100 years
+        else:
+            unlimited_until = (datetime.now() + timedelta(days=days)).isoformat()
+        user_data['unlimited_until'] = unlimited_until
+    
+    if credits is not None:
+        user_data['credits'] = user_data.get('credits', 0) + credits
+    
+    db[str(user_id)] = user_data
+    save_credits_db(db)
+
+def use_credit(user_id):
+    """Use one credit from user's account. Returns True if successful, False if insufficient credits"""
+    credits, has_unlimited = get_user_credits(user_id)
+    
+    if has_unlimited:
+        return True
+    
+    if credits > 0:
+        update_user_credits(user_id, credits=-1)
+        return True
+    
+    return False
 
 # Global HTTP client with connection pooling for high performance
 HTTP_CLIENT = None
@@ -404,6 +514,33 @@ async def verify_membership_middleware(update: Update, context: ContextTypes.DEF
 async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Handle inline keyboard callbacks"""
     query = update.callback_query
+    user = query.from_user
+    
+    # Save user information
+    save_user_info(
+        user_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    # Handle credit plan selection - redirect to admin
+    if query.data.startswith("plan_"):
+        plan_index = int(query.data.split("_")[1])
+        plan = CREDIT_PLANS[plan_index]
+        
+        # Send a message with the selected plan and redirect to admin
+        await query.message.reply_text(
+            f"💳 *Selected Plan:* {plan['price']} - {plan['description']}\n\n"
+            f"👉 *Contact @icodeinbinary to purchase this plan.*",
+            parse_mode=ParseMode.MARKDOWN,
+            reply_markup=InlineKeyboardMarkup([[
+                InlineKeyboardButton("💬 Contact Admin", url="https://t.me/icodeinbinary")
+            ]])
+        )
+        
+        await query.answer()
+        return
     
     if query.data == "check_membership":
         user_id = query.from_user.id
@@ -423,7 +560,8 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
             keyboard = [
                 ["Mobile Search 📱", "Aadhar Search 🔎"],
                 ["Social Media Search 🌐", "Breach Check 🔒"],
-                ["Age Check 👶", "Vehicle Info 🚗"]
+                ["Age Check 👶", "Vehicle Info 🚗"],
+                ["💳 My Credits", "💰 Buy Credits"]
             ]
             reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
             
@@ -457,10 +595,23 @@ async def mobile_search(update: Update, mobile: str):
     if mobile == BACK_TO_MENU:
         return
     
-    # Check API cooldown
     user_id = update.effective_user.id
+    
+    # Check credits first
+    if not use_credit(user_id):
+        await update.message.reply_text(
+            "💳 *Insufficient Credits!*\n\n"
+            "*You need credits to use this feature.*\n"
+            "*Use '💰 Buy Credits' to purchase credits.*",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Check API cooldown
     is_allowed, remaining = await check_api_cooldown(user_id)
     if not is_allowed:
+        # Refund credit since API call didn't happen
+        update_user_credits(user_id, credits=1)
         quote = await get_random_quote()
         await update.message.reply_text(
             f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
@@ -493,7 +644,9 @@ async def mobile_search(update: Update, mobile: str):
         await searching_message.delete()
         
         if "error" in data:
-            await update.message.reply_text(f"Error: {data['error']}")
+            # Refund credit since no information was found
+            update_user_credits(user_id, credits=1)
+            await update.message.reply_text(f"Error: {data['error']}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
             return
         
         # Set API cooldown after successful response
@@ -589,20 +742,37 @@ async def mobile_search(update: Update, mobile: str):
             except Exception as e:
                 logger.error(f"Fallback API call failed: {str(e)}")
             
-            await update.message.reply_text("No information found for this mobile number.")
+            # Refund credit since no information was found
+            update_user_credits(user_id, credits=1)
+            await update.message.reply_text("No information found for this mobile number.\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         logger.error(f"Error in mobile search: {str(e)}")
-        await update.message.reply_text(f"Error: {str(e)}")
+        # Refund credit since an error occurred
+        update_user_credits(user_id, credits=1)
+        await update.message.reply_text(f"Error: {str(e)}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
 
 async def aadhar_search(update: Update, aadhar: str):
     # If the aadhar is "Back to Menu", ignore it
     if aadhar == "⬅️ Back to Menu":
         return
     
-    # Check API cooldown
     user_id = update.effective_user.id
+    
+    # Check credits first
+    if not use_credit(user_id):
+        await update.message.reply_text(
+            "💳 *Insufficient Credits!*\n\n"
+            "*You need credits to use this feature.*\n"
+            "*Use '💰 Buy Credits' to purchase credits.*",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Check API cooldown
     is_allowed, remaining = await check_api_cooldown(user_id)
     if not is_allowed:
+        # Refund credit since API call didn't happen
+        update_user_credits(user_id, credits=1)
         quote = await get_random_quote()
         await update.message.reply_text(
             f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
@@ -635,7 +805,9 @@ async def aadhar_search(update: Update, aadhar: str):
         await searching_message.delete()
         
         if "error" in data:
-            await update.message.reply_text(f"Error: {data['error']}")
+            # Refund credit since no information was found
+            update_user_credits(user_id, credits=1)
+            await update.message.reply_text(f"Error: {data['error']}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
             return
         
         # Set API cooldown after successful response
@@ -731,13 +903,19 @@ async def aadhar_search(update: Update, aadhar: str):
             except Exception as e:
                 logger.error(f"Fallback API call failed: {str(e)}")
             
-            await update.message.reply_text("No information found for this Aadhar number.")
+            # Refund credit since no information was found
+            update_user_credits(user_id, credits=1)
+            await update.message.reply_text("No information found for this Aadhar number.\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
     except Exception as e:
         logger.error(f"Error in Aadhar search: {str(e)}")
-        await update.message.reply_text(f"Error: {str(e)}")
+        # Refund credit since an error occurred
+        update_user_credits(user_id, credits=1)
+        await update.message.reply_text(f"Error: {str(e)}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
 
 # Age range search function using doxit.me API
 async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
     # Check if an argument was provided
     if not context.args:
         await update.message.reply_text("Please provide an Aadhaar number after the /age command.")
@@ -749,10 +927,21 @@ async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if aadhar_number == "⬅️ Back to Menu":
         return
     
+    # Check credits first
+    if not use_credit(user_id):
+        await update.message.reply_text(
+            "💳 *Insufficient Credits!*\n\n"
+            "*You need credits to use this feature.*\n"
+            "*Use '💰 Buy Credits' to purchase credits.*",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
     # Check API cooldown
-    user_id = update.effective_user.id
     is_allowed, remaining = await check_api_cooldown(user_id)
     if not is_allowed:
+        # Refund credit since API call didn't happen
+        update_user_credits(user_id, credits=1)
         quote = await get_random_quote()
         await update.message.reply_text(
             f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
@@ -827,18 +1016,25 @@ async def age_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                     
                 else:
-                    # If there's an error or no data
+                    # If there's an error or no data - refund credit
+                    update_user_credits(user_id, credits=1)
                     error_msg = data.get("message", "Could not retrieve age information")
-                    await update.message.reply_text(f"❌ {error_msg}")
+                    await update.message.reply_text(f"❌ {error_msg}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
                     
             except ValueError as e:
                 logger.error(f"Invalid JSON response: {response.text[:200]}")
-                await update.message.reply_text("Error: Invalid response from age API")
+                # Refund credit since API error occurred
+                update_user_credits(user_id, credits=1)
+                await update.message.reply_text("Error: Invalid response from age API\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
         else:
-            await update.message.reply_text(f"Error checking age data: Status code {response.status_code}")
+            # Refund credit since API error occurred
+            update_user_credits(user_id, credits=1)
+            await update.message.reply_text(f"Error checking age data: Status code {response.status_code}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
     
     except Exception as e:
         logger.error(f"Error in age search: {str(e)}")
+        # Refund credit since an error occurred
+        update_user_credits(user_id, credits=1)
         await update.message.reply_text(f"Error: {str(e)}")
 
 
@@ -854,6 +1050,8 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # Social links search function
 async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
     # Check if an argument was provided
     if not context.args:
         await update.message.reply_text("Please provide a username or person name after the /social command.")
@@ -866,10 +1064,21 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if query == "⬅️ Back to Menu":
         return
     
+    # Check credits first
+    if not use_credit(user_id):
+        await update.message.reply_text(
+            "💳 *Insufficient Credits!*\n\n"
+            "*You need credits to use this feature.*\n"
+            "*Use '💰 Buy Credits' to purchase credits.*",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
     # Check API cooldown
-    user_id = update.effective_user.id
     is_allowed, remaining = await check_api_cooldown(user_id)
     if not is_allowed:
+        # Refund credit since API call didn't happen
+        update_user_credits(user_id, credits=1)
         quote = await get_random_quote()
         await update.message.reply_text(
             f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
@@ -944,14 +1153,19 @@ async def social_search(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if profiles_found:
                 await update.message.reply_text(result_message, parse_mode=ParseMode.HTML)
             else:
-                await update.message.reply_text(f"No social media profiles found for '{query}'.")
+                # Refund credit since no profiles were found
+                update_user_credits(user_id, credits=1)
+                await update.message.reply_text(f"No social media profiles found for '{query}'.\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
         else:
-            # If there's an error or no data
+            # If there's an error or no data - refund credit
+            update_user_credits(user_id, credits=1)
             error_msg = data.get("message", "Unknown error occurred")
-            await update.message.reply_text(f"Could not retrieve social media profiles: {error_msg}")
+            await update.message.reply_text(f"Could not retrieve social media profiles: {error_msg}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
     
     except Exception as e:
         logger.error(f"Error in social search: {str(e)}")
+        # Refund credit since an error occurred
+        update_user_credits(user_id, credits=1)
         await update.message.reply_text(f"Error: {str(e)}")
 
 # Breach check function using doxit.me API
@@ -960,10 +1174,23 @@ async def breach_check(update: Update, email: str):
     if email == "⬅️ Back to Menu":
         return
     
-    # Check API cooldown
     user_id = update.effective_user.id
+    
+    # Check credits first
+    if not use_credit(user_id):
+        await update.message.reply_text(
+            "💳 *Insufficient Credits!*\n\n"
+            "*You need credits to use this feature.*\n"
+            "*Use '💰 Buy Credits' to purchase credits.*",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Check API cooldown
     is_allowed, remaining = await check_api_cooldown(user_id)
     if not is_allowed:
+        # Refund credit since API call didn't happen
+        update_user_credits(user_id, credits=1)
         quote = await get_random_quote()
         await update.message.reply_text(
             f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
@@ -1003,55 +1230,108 @@ async def breach_check(update: Update, email: str):
             try:
                 breach_data = response.json()
                 
-                # Check if the response contains breach information
-                if 'breaches' in breach_data and breach_data['breaches']:
-                    breaches = breach_data['breaches']
-                    breach_count = len(breaches)
+                # Check if the response is successful and has results
+                if breach_data.get('success') and breach_data.get('found', 0) > 0:
+                    results = breach_data.get('result', [])
+                    found_count = breach_data.get('found', 0)
+                    quota = breach_data.get('quota', 'N/A')
                     
                     # Create message with breach information
                     result = f"⚠️ *Email Breach Alert* ⚠️\n\n"
-                    result += f"The email `{email}` has been found in *{breach_count} data breaches*:\n\n"
+                    result += f"The email `{email}` has been found in *{found_count} breach records*\n"
+                    result += f"📊 *API Quota:* {quota}\n\n"
                     
-                    # Display breach information with more details
-                    for i, breach in enumerate(breaches):
-                        breach_name = breach.get('Name', 'Unknown')
-                        breach_date = breach.get('BreachDate', 'Unknown')
-                        description = breach.get('Description', 'No description available')
-                        data_classes = breach.get('DataClasses', [])
+                    # Group results by source and collect unique passwords
+                    sources = {}
+                    passwords_found = set()
+                    
+                    for breach_record in results:
+                        source_info = breach_record.get('source', {})
+                        source_name = source_info.get('name', 'Unknown')
+                        breach_date = source_info.get('breach_date', 'Unknown')
+                        fields = breach_record.get('fields', [])
+                        password = breach_record.get('password')
                         
-                        breach_info = f"🔴 *{breach_name}*\n"
-                        breach_info += f"📅 Date: `{breach_date}`\n"
-                        breach_info += f"📝 Info: {description}\n"
+                        if source_name not in sources:
+                            sources[source_name] = {
+                                'date': breach_date,
+                                'fields': set(fields),
+                                'count': 0
+                            }
                         
-                        if data_classes:
-                            data_types = ", ".join(data_classes)
-                            breach_info += f"💾 Data: `{data_types}`\n"
+                        sources[source_name]['count'] += 1
+                        sources[source_name]['fields'].update(fields)
                         
-                        breach_info += "\n"
+                        if password and password != email:  # Don't show email as password
+                            passwords_found.add(password)
+                    
+                    # Display breach sources
+                    result += "🔴 *Breach Sources:*\n"
+                    for source_name, info in sources.items():
+                        result += f"\n📍 *{source_name}*\n"
+                        if info['date'] and info['date'] != 'Unknown':
+                            result += f"📅 Date: `{info['date']}`\n"
+                        result += f"📈 Records: `{info['count']}`\n"
+                        if info['fields']:
+                            fields_list = ", ".join(sorted(info['fields']))
+                            result += f"💾 Data: `{fields_list}`\n"
+                    
+                    # Display found passwords (if any)
+                    if passwords_found:
+                        result += f"\n🔑 *Exposed Passwords ({len(passwords_found)}):*\n"
+                        for i, password in enumerate(sorted(passwords_found)[:5], 1):  # Show max 5 passwords
+                            # Mask long passwords for security
+                            if len(password) > 20:
+                                masked_password = password[:3] + "*" * (len(password)-6) + password[-3:]
+                            else:
+                                masked_password = password
+                            result += f"`{i}.` `{masked_password}`\n"
                         
-                        # Check if adding this breach would exceed the limit
-                        if len(result + breach_info) > MESSAGE_LENGTH_LIMIT:  # Leave some buffer
-                            # Send current result and start a new one
-                            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
-                            result = f"*Continued breaches for {email}:*\n\n" + breach_info
+                        if len(passwords_found) > 5:
+                            result += f"_...and {len(passwords_found) - 5} more passwords_\n"
+                    
+                    result += f"\n⚠️ *Security Recommendation:*\n"
+                    result += f"_Change passwords immediately if you recognize any of the above._"
+                    
+                    # Check message length and split if needed
+                    if len(result) > 4000:  # Telegram limit is 4096
+                        # Split into two messages
+                        split_point = result.find('\n🔑 *Exposed Passwords')
+                        if split_point > 0:
+                            part1 = result[:split_point]
+                            part2 = result[split_point:]
+                            await update.message.reply_text(part1, parse_mode=ParseMode.MARKDOWN)
+                            await update.message.reply_text(part2, parse_mode=ParseMode.MARKDOWN)
                         else:
-                            result += breach_info
-                    
-                    # Send final message
-                    await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                            await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
+                    else:
+                        await update.message.reply_text(result, parse_mode=ParseMode.MARKDOWN)
                         
                 else:
-                    # No breaches found
-                    await update.message.reply_text(f"✅ Good news! The email `{email}` has NOT been found in any known data breaches.", parse_mode=ParseMode.MARKDOWN)
+                    # No breaches found or API returned success=false
+                    if breach_data.get('success') == False:
+                        # API error - refund credit
+                        update_user_credits(user_id, credits=1)
+                        await update.message.reply_text(f"❌ API Error: {breach_data.get('message', 'Unknown error')}")
+                    else:
+                        # No breaches found - refund credit since no data was provided
+                        update_user_credits(user_id, credits=1)
+                        await update.message.reply_text(f"✅ Good news! The email `{email}` has NOT been found in any known data breaches.\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
                     
             except ValueError as e:
                 logger.error(f"Invalid JSON response: {response.text[:200]}")
-                await update.message.reply_text("Error: Invalid response from breach API")
+                # Refund credit since API error occurred
+                update_user_credits(user_id, credits=1)
+                await update.message.reply_text("Error: Invalid response from breach API\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
         else:
-            await update.message.reply_text(f"Error checking breach data: Status code {response.status_code}")
+            # Refund credit since API error occurred
+            update_user_credits(user_id, credits=1)
+            await update.message.reply_text(f"Error checking breach data: Status code {response.status_code}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
             
     except Exception as e:
         logger.error(f"Error in breach check: {str(e)}")
+        # Refund credit since an error occurred
+        update_user_credits(user_id, credits=1)
         await update.message.reply_text(f"Error: {str(e)}")
 
 # Vehicle info search function
@@ -1060,10 +1340,23 @@ async def vehicle_search(update: Update, vehicle_number: str):
     if vehicle_number == "⬅️ Back to Menu":
         return
     
-    # Check API cooldown
     user_id = update.effective_user.id
+    
+    # Check credits first
+    if not use_credit(user_id):
+        await update.message.reply_text(
+            "💳 *Insufficient Credits!*\n\n"
+            "*You need credits to use this feature.*\n"
+            "*Use '💰 Buy Credits' to purchase credits.*",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+    
+    # Check API cooldown
     is_allowed, remaining = await check_api_cooldown(user_id)
     if not is_allowed:
+        # Refund credit since API call didn't happen
+        update_user_credits(user_id, credits=1)
         quote = await get_random_quote()
         await update.message.reply_text(
             f"⏳ *Chill out.. {remaining} seconds before making another API request.*\n\n"
@@ -1217,41 +1510,87 @@ async def vehicle_search(update: Update, vehicle_number: str):
                     
                 else:
                     # No vehicle data found
-                    await update.message.reply_text(f"❌ No vehicle information found for: {vehicle_number}")
+                    # Refund credit since no vehicle information was found
+                    update_user_credits(user_id, credits=1)
+                    await update.message.reply_text(f"❌ No vehicle information found for: {vehicle_number}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
                     
             except ValueError as e:
                 logger.error(f"Invalid JSON response: {response.text[:200]}")
-                await update.message.reply_text("Error: Invalid response from vehicle API")
+                # Refund credit since API error occurred
+                update_user_credits(user_id, credits=1)
+                await update.message.reply_text("Error: Invalid response from vehicle API\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
         else:
-            await update.message.reply_text(f"Error checking vehicle data: Status code {response.status_code}")
+            # Refund credit since API error occurred
+            update_user_credits(user_id, credits=1)
+            await update.message.reply_text(f"Error checking vehicle data: Status code {response.status_code}\n\n💳 *Credit not deducted*", parse_mode=ParseMode.MARKDOWN)
             
     except Exception as e:
         logger.error(f"Error in vehicle search: {str(e)}")
+        # Refund credit since an error occurred
+        update_user_credits(user_id, credits=1)
         await update.message.reply_text(f"Error: {str(e)}")
 
 # Main menu function with full welcome message
 async def show_welcome_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    chat_id = update.effective_chat.id
+    user = update.effective_user
+    
+    # Save user information
+    save_user_info(
+        user_id=user_id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
+    
+    # Get user's credits
+    credits, has_unlimited = get_user_credits(user_id)
+    
+    # Check if this is a new user (has exactly 2 credits and no unlimited access)
+    is_new_user = (credits == 2 and not has_unlimited)
+    
     # Create reply keyboard with only necessary buttons
     keyboard = [
         ["Mobile Search 📱", "Aadhar Search 🔎"],
         ["Social Media Search 🌐", "Breach Check 🔒"],
-        ["Age Check 👶", "Vehicle Info 🚗"]
+        ["Age Check 👶", "Vehicle Info 🚗"],
+        ["💳 My Credits", "💰 Buy Credits"]
     ]
     
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
     
+    # Credit status text with new user welcome
+    if has_unlimited:
+        credit_status = "🔥 *Unlimited Access Active*"
+    elif is_new_user:
+        credit_status = f"🎉 *Welcome Bonus: {credits} Free Credits!*\n💳 *Current Credits: {credits}*"
+    else:
+        credit_status = f"💳 *Credits: {credits}*"
+    
+    # Welcome message with new user bonus info
+    welcome_text = f"*🔥 Welcome to Mr.Detective Bot 🔥*\n\n"
+    welcome_text += f"*👤 Your Chat ID:* `{chat_id}`\n"
+    welcome_text += f"{credit_status}\n\n"
+    
+    if is_new_user:
+        welcome_text += "🎁 *New User Bonus!*\n"
+        welcome_text += "You've received *2 free credits* to try our services!\n"
+        welcome_text += "Each search costs 1 credit. No charge if no data found.\n\n"
+    
+    welcome_text += "*🔍 Features:*\n"
+    welcome_text += f"• {get_maintenance_status('Mobile Number Search', MOBILE_API_MAINTENANCE)}\n"
+    welcome_text += f"• {get_maintenance_status('Aadhar Number Search', AADHAR_API_MAINTENANCE)}\n"
+    welcome_text += f"• {get_maintenance_status('Social Media Profiles', SOCIAL_API_MAINTENANCE)}\n"
+    welcome_text += f"• {get_maintenance_status('Email Breach Check', BREACH_API_MAINTENANCE)}\n"
+    welcome_text += f"• {get_maintenance_status('Age Check from Aadhar', AGE_API_MAINTENANCE)}\n"
+    welcome_text += f"• {get_maintenance_status('Vehicle RC Information', VEHICLE_API_MAINTENANCE)}\n\n"
+    welcome_text += "*👨‍💻 Developer:* @icodeinbinary\n\n"
+    welcome_text += "*Select an option below👇*"
+    
     # Send the welcome message with the keyboard
     await update.message.reply_text(
-        text="*🔥 Welcome to Mr.Detective Bot 🔥*\n\n"
-        "*🔍 Features:*\n"
-        f"• {get_maintenance_status('Mobile Number Search', MOBILE_API_MAINTENANCE)}\n"
-        f"• {get_maintenance_status('Aadhar Number Search', AADHAR_API_MAINTENANCE)}\n"
-        f"• {get_maintenance_status('Social Media Profiles', SOCIAL_API_MAINTENANCE)}\n"
-        f"• {get_maintenance_status('Email Breach Check', BREACH_API_MAINTENANCE)}\n"
-        f"• {get_maintenance_status('Age Check from Aadhar', AGE_API_MAINTENANCE)}\n"
-        f"• {get_maintenance_status('Vehicle RC Information', VEHICLE_API_MAINTENANCE)}\n\n"
-        "*👨‍💻 Developer:* @icodeinbinary\n\n"
-        "*Select an option below👇*",
+        text=welcome_text,
         parse_mode=ParseMode.MARKDOWN,
         reply_markup=reply_markup
     )
@@ -1264,7 +1603,8 @@ async def show_simple_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = [
         ["Mobile Search 📱", "Aadhar Search 🔎"],
         ["Social Media Search 🌐", "Breach Check 🔒"],
-        ["Age Check 👶", "Vehicle Info 🚗"]
+        ["Age Check 👶", "Vehicle Info 🚗"],
+        ["💳 My Credits", "💰 Buy Credits"]
     ]
     
     reply_markup = ReplyKeyboardMarkup(keyboard, resize_keyboard=True)
@@ -1287,10 +1627,174 @@ async def show_simple_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     return ConversationHandler.END
 
+# Credits display function
+async def show_credits(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    credits, has_unlimited = get_user_credits(user_id)
+    
+    if has_unlimited:
+        # Get expiry date
+        db = load_credits_db()
+        user_data = db.get(str(user_id), {})
+        unlimited_until = user_data.get('unlimited_until')
+        
+        if unlimited_until:
+            expiry_date = datetime.fromisoformat(unlimited_until)
+            if expiry_date.year > 2100:  # Lifetime
+                expiry_text = "Never expires (Lifetime)"
+            else:
+                expiry_text = expiry_date.strftime("%d/%m/%Y at %H:%M")
+        else:
+            expiry_text = "Unknown"
+            
+        message = f"*🔥 Your Credits Status*\n\n"\
+                 f"💳 *Current Credits:* {credits}\n"\
+                 f"✨ *Unlimited Access:* Active\n"\
+                 f"📅 *Expires:* {expiry_text}\n\n"\
+                 f"*You have unlimited access to all features!*"
+    else:
+        message = f"*💳 Your Credits Status*\n\n"\
+                 f"💳 *Current Credits:* {credits}\n"\
+                 f"✨ *Unlimited Access:* Not Active\n\n"\
+                 f"*Each search costs 1 credit.*\n"\
+                 f"*Need more credits? Use '💰 Buy Credits' button!*"
+    
+    await update.message.reply_text(
+        text=message,
+        parse_mode=ParseMode.MARKDOWN
+    )
+    
+    return ConversationHandler.END
+
+# Buy credits function
+async def show_buy_credits(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    # Create inline keyboard with plans
+    keyboard = []
+    
+    for plan in CREDIT_PLANS:
+        button_text = f"{plan['price']} - {plan['description']}"
+        keyboard.append([InlineKeyboardButton(button_text, callback_data=f"plan_{CREDIT_PLANS.index(plan)}")])
+    
+    # Add contact button
+    keyboard.append([InlineKeyboardButton("📞 Contact @icodeinbinary to Buy", url="https://t.me/icodeinbinary")])
+    
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
+    # Simple message with just inline buttons
+    await update.message.reply_text(
+        text="💰 *Choose your plan:*",
+        parse_mode=ParseMode.MARKDOWN,
+        reply_markup=reply_markup
+    )
+    
+    return ConversationHandler.END
+
+# Admin command to add credits
+async def add_credits_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    
+    # Check if user is admin
+    if user_id not in ADMIN_IDS:
+        await update.message.reply_text("❌ You don't have permission to use this command.")
+        return
+    
+    # Parse command arguments
+    try:
+        args = context.args
+        if len(args) < 2:
+            await update.message.reply_text(
+                "*Usage:* `/add <credits> <days>`\n\n"
+                "*Examples:*\n"
+                "• `/add 100 0` - Add 100 credits\n"
+                "• `/add 0 1` - Add 1 day unlimited\n"
+                "• `/add 0 7` - Add 7 days unlimited\n"
+                "• `/add 0 30` - Add 30 days unlimited\n"
+                "• `/add 0 999999` - Add lifetime unlimited\n\n"
+                "*Note:* Reply to a user's message or provide user ID as 3rd argument",
+                parse_mode=ParseMode.MARKDOWN
+            )
+            return
+        
+        credits = int(args[0])
+        days = int(args[1])
+        
+        # Get target user ID
+        target_user_id = None
+        if len(args) >= 3:
+            target_user_id = int(args[2])
+        elif update.message.reply_to_message:
+            target_user_id = update.message.reply_to_message.from_user.id
+        else:
+            await update.message.reply_text("❌ Please reply to a user's message or provide user ID as 3rd argument.")
+            return
+        
+        # Update credits
+        if credits > 0:
+            update_user_credits(target_user_id, credits=credits)
+        
+        if days > 0:
+            update_user_credits(target_user_id, days=days)
+        
+        # Get updated status
+        new_credits, has_unlimited = get_user_credits(target_user_id)
+        
+        # Send confirmation
+        message = f"✅ *Credits Added Successfully!*\n\n"\
+                 f"👤 *User ID:* `{target_user_id}`\n"\
+                 f"💳 *Credits Added:* {credits}\n"\
+                 f"📅 *Days Added:* {days}\n\n"\
+                 f"🔄 *Updated Status:*\n"\
+                 f"• Credits: {new_credits}\n"\
+                 f"• Unlimited: {'Yes' if has_unlimited else 'No'}"
+        
+        await update.message.reply_text(
+            text=message,
+            parse_mode=ParseMode.MARKDOWN
+        )
+        
+        # Notify the user
+        try:
+            if credits > 0 and days > 0:
+                user_message = f"🎉 *Credits Added!*\n\n"\
+                              f"💳 *{credits} credits* added to your account\n"\
+                              f"✨ *{days} days unlimited access* added\n\n"\
+                              f"*Enjoy using the bot!*"
+            elif credits > 0:
+                user_message = f"🎉 *{credits} Credits Added!*\n\n"\
+                              f"*Your credits have been added successfully.*\n"\
+                              f"*Enjoy using the bot!*"
+            else:
+                duration_text = "lifetime" if days == 999999 else f"{days} days"
+                user_message = f"🎉 *Unlimited Access Added!*\n\n"\
+                              f"✨ *{duration_text} unlimited access* added\n\n"\
+                              f"*Enjoy unlimited searches!*"
+            
+            await context.bot.send_message(
+                chat_id=target_user_id,
+                text=user_message,
+                parse_mode=ParseMode.MARKDOWN
+            )
+        except Exception as e:
+            logger.info(f"Could not notify user {target_user_id}: {e}")
+            
+    except ValueError:
+        await update.message.reply_text("❌ Invalid number format. Please use integers only.")
+    except Exception as e:
+        await update.message.reply_text(f"❌ Error: {str(e)}")
+
 # Main message handler
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    user = update.effective_user
     text = update.message.text
+    
+    # Save user information on every interaction
+    save_user_info(
+        user_id=user_id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
     
     # Check rate limiting first
     if not await check_rate_limit(user_id):
@@ -1298,6 +1802,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "⏰ Rate limit exceeded. Chill out.. 1 Minute before making another request."
         )
         return ConversationHandler.END
+    
+    # Handle credits buttons
+    if text == "💳 My Credits":
+        return await show_credits(update, context)
+    elif text == "💰 Buy Credits":
+        return await show_buy_credits(update, context)
     
     # Check channel membership
     if not await verify_membership_middleware(update, context):
@@ -1493,6 +2003,15 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # Handle mobile number input
 async def handle_mobile_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
+    user = update.effective_user
+    
+    # Save user information
+    save_user_info(
+        user_id=user.id,
+        username=user.username,
+        first_name=user.first_name,
+        last_name=user.last_name
+    )
     
     # Check channel membership first
     if not await verify_membership_middleware(update, context):
@@ -1698,6 +2217,7 @@ def main():
     
     app.add_handler(conv_handler)
     app.add_handler(CallbackQueryHandler(handle_callback_query))
+    app.add_handler(CommandHandler("add", add_credits_command))
     
     # Start cleanup task in background
     async def start_cleanup():
@@ -1724,5 +2244,3 @@ def main():
 if __name__ == "__main__":
     main()
     print("👋 Goodbye!") 
-
-
